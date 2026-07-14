@@ -1,11 +1,42 @@
 import type { DimensionConfig } from "./schemas.js";
+import { isInSpec } from "./tolerance.js";
 
+/**
+ * Overall (long-term) process performance indices.
+ *
+ * These are **Pp / Ppk** computed with the overall sample standard deviation
+ * (`method: "overall_sample_stddev"`), not within-subgroup Cp/Cpk.
+ *
+ * `cp` / `cpk` are deprecated aliases kept equal to `pp` / `ppk` for API
+ * compatibility. Prefer `pp` / `ppk` in new code.
+ */
 export interface CapabilityResult {
   n: number;
   mean: number | null;
   stdDev: number | null;
+  /**
+   * Overall Pp (long-term). Prefer this over `cp`.
+   */
+  pp: number | null;
+  /**
+   * Overall Ppk (long-term). Prefer this over `cpk`.
+   */
+  ppk: number | null;
+  /**
+   * @deprecated Alias of `pp` (overall / long-term). Not within-subgroup Cp.
+   */
   cp: number | null;
+  /**
+   * @deprecated Alias of `ppk` (overall / long-term). Not within-subgroup Cpk.
+   */
   cpk: number | null;
+  /** How the indices were computed. */
+  method: "overall_sample_stddev";
+  /**
+   * True when n≥2, sample stddev is 0, and every value is in-spec.
+   * `pp`/`ppk`/`cp`/`cpk` are then `null` so UI can show "∞" or "N/A (zero variation)".
+   */
+  zeroVariation: boolean;
   percentYellow: number;
   percentRed: number;
 }
@@ -17,9 +48,30 @@ function sampleStdDev(values: number[], mean: number): number | null {
   return Math.sqrt(variance);
 }
 
+function emptyCapability(): CapabilityResult {
+  return {
+    n: 0,
+    mean: null,
+    stdDev: null,
+    pp: null,
+    ppk: null,
+    cp: null,
+    cpk: null,
+    method: "overall_sample_stddev",
+    zeroVariation: false,
+    percentYellow: 0,
+    percentRed: 0,
+  };
+}
+
 /**
- * Compute process capability metrics for a set of measurements.
- * Unilateral tolerances fall back to one-sided Cpk.
+ * Compute overall (long-term) process performance indices Pp/Ppk for a set of
+ * measurements, using the sample standard deviation of all values.
+ *
+ * Unilateral tolerances fall back to one-sided Ppk.
+ *
+ * Note: Returned `cp`/`cpk` mirror `pp`/`ppk` for backward compatibility; they
+ * are not within-subgroup capability indices.
  */
 export function computeCapability(
   values: number[],
@@ -28,38 +80,40 @@ export function computeCapability(
 ): CapabilityResult {
   const n = values.length;
   if (n === 0) {
-    return {
-      n: 0,
-      mean: null,
-      stdDev: null,
-      cp: null,
-      cpk: null,
-      percentYellow: 0,
-      percentRed: 0,
-    };
+    return emptyCapability();
   }
 
   const mean = values.reduce((a, b) => a + b, 0) / n;
   const stdDev = sampleStdDev(values, mean);
 
-  let cp: number | null = null;
-  let cpk: number | null = null;
+  let pp: number | null = null;
+  let ppk: number | null = null;
+  let zeroVariation = false;
 
-  if (stdDev != null && stdDev > 0) {
+  if (stdDev != null && stdDev === 0 && n >= 2) {
+    const allInSpec = values.every((v) => isInSpec(v, config));
+    if (allInSpec) {
+      // Perfect repeatability in-spec: indices are conceptually infinite.
+      // Return null + flag so UI can render "∞" / "N/A (zero variation)".
+      zeroVariation = true;
+      pp = null;
+      ppk = null;
+    }
+  } else if (stdDev != null && stdDev > 0) {
     const { usl, lsl } = config;
     if (usl != null && lsl != null) {
-      cp = (usl - lsl) / (6 * stdDev);
+      pp = (usl - lsl) / (6 * stdDev);
     }
 
     const upper = usl != null ? (usl - mean) / (3 * stdDev) : null;
     const lower = lsl != null ? (mean - lsl) / (3 * stdDev) : null;
 
     if (upper != null && lower != null) {
-      cpk = Math.min(upper, lower);
+      ppk = Math.min(upper, lower);
     } else if (upper != null) {
-      cpk = upper;
+      ppk = upper;
     } else if (lower != null) {
-      cpk = lower;
+      ppk = lower;
     }
   }
 
@@ -76,8 +130,13 @@ export function computeCapability(
     n,
     mean,
     stdDev,
-    cp,
-    cpk,
+    pp,
+    ppk,
+    // Deprecated aliases — same overall values as pp/ppk
+    cp: pp,
+    cpk: ppk,
+    method: "overall_sample_stddev",
+    zeroVariation,
     percentYellow: n > 0 ? (yellow / n) * 100 : 0,
     percentRed: n > 0 ? (red / n) * 100 : 0,
   };
@@ -86,12 +145,18 @@ export function computeCapability(
 export function roundCapability(result: CapabilityResult, digits = 4): CapabilityResult {
   const r = (v: number | null) =>
     v == null ? null : Math.round(v * 10 ** digits) / 10 ** digits;
+  const pp = r(result.pp);
+  const ppk = r(result.ppk);
   return {
     ...result,
     mean: r(result.mean),
     stdDev: r(result.stdDev),
-    cp: r(result.cp),
-    cpk: r(result.cpk),
+    pp,
+    ppk,
+    cp: pp,
+    cpk: ppk,
+    method: result.method,
+    zeroVariation: result.zeroVariation,
     percentYellow: Math.round(result.percentYellow * 100) / 100,
     percentRed: Math.round(result.percentRed * 100) / 100,
   };

@@ -1,19 +1,70 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import * as SecureStore from "expo-secure-store";
 import { createContext, useContext } from "react";
 
-/** AsyncStorage key holding the current session token. */
+/** Key holding the current session token (SecureStore, with AsyncStorage fallback). */
 export const TOKEN_KEY = "ds_token";
 
+async function secureGet(key: string): Promise<string | null> {
+  try {
+    return await SecureStore.getItemAsync(key);
+  } catch {
+    return AsyncStorage.getItem(key);
+  }
+}
+
+async function secureSet(key: string, value: string): Promise<void> {
+  try {
+    await SecureStore.setItemAsync(key, value);
+    try {
+      await AsyncStorage.removeItem(key);
+    } catch {
+      // Best-effort cleanup of legacy AsyncStorage copy.
+    }
+  } catch {
+    await AsyncStorage.setItem(key, value);
+  }
+}
+
+async function secureDelete(key: string): Promise<void> {
+  try {
+    await SecureStore.deleteItemAsync(key);
+  } catch {
+    // SecureStore unavailable — still clear AsyncStorage below.
+  }
+  try {
+    await AsyncStorage.removeItem(key);
+  } catch {
+    // ignore
+  }
+}
+
 export async function getToken(): Promise<string | null> {
-  return AsyncStorage.getItem(TOKEN_KEY);
+  const fromSecure = await secureGet(TOKEN_KEY);
+  if (fromSecure) return fromSecure;
+
+  // Migrate legacy AsyncStorage token into SecureStore when possible.
+  try {
+    const legacy = await AsyncStorage.getItem(TOKEN_KEY);
+    if (!legacy) return null;
+    try {
+      await SecureStore.setItemAsync(TOKEN_KEY, legacy);
+      await AsyncStorage.removeItem(TOKEN_KEY);
+    } catch {
+      // Keep serving from AsyncStorage if SecureStore cannot accept the write.
+    }
+    return legacy;
+  } catch {
+    return null;
+  }
 }
 
 export async function setToken(token: string): Promise<void> {
-  await AsyncStorage.setItem(TOKEN_KEY, token);
+  await secureSet(TOKEN_KEY, token);
 }
 
 export async function clearToken(): Promise<void> {
-  await AsyncStorage.removeItem(TOKEN_KEY);
+  await secureDelete(TOKEN_KEY);
 }
 
 export interface AuthUser {

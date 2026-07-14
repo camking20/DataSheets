@@ -64,6 +64,7 @@ export default function InspectSheetScreen() {
   const [banner, setBanner] = useState<string | null>(null);
 
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const navBusyRef = useRef(false);
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -80,7 +81,7 @@ export default function InspectSheetScreen() {
       const unsynced = getUnsyncedEntries(localDraft);
       for (const entry of unsynced) {
         try {
-          await trpc.sheets.recordMeasurement.mutate({
+          const recorded = await trpc.sheets.recordMeasurement.mutate({
             dataSheetId: id,
             dimensionId: entry.dimensionId,
             sampleIndex: entry.sampleIndex,
@@ -88,6 +89,14 @@ export default function InspectSheetScreen() {
           });
           const next = await markSynced(id, entry.dimensionId, entry.sampleIndex);
           setDraft(next);
+          setDetail((prev) => {
+            if (!prev) return prev;
+            const withoutThis = prev.measurements.filter(
+              (m) =>
+                !(m.dimensionId === entry.dimensionId && m.sampleIndex === entry.sampleIndex),
+            );
+            return { ...prev, measurements: [...withoutThis, recorded] };
+          });
         } catch {
           // Leave queued for retry
         }
@@ -237,7 +246,7 @@ export default function InspectSheetScreen() {
       if (!dimension || !id) return;
       setSaving(true);
       try {
-        await trpc.sheets.recordMeasurement.mutate({
+        const recorded = await trpc.sheets.recordMeasurement.mutate({
           dataSheetId: id,
           dimensionId: dimension.id,
           sampleIndex: currentSample,
@@ -250,7 +259,7 @@ export default function InspectSheetScreen() {
           const withoutThis = prev.measurements.filter(
             (m) => !(m.dimensionId === dimension.id && m.sampleIndex === currentSample),
           );
-          return { ...prev, measurements: withoutThis };
+          return { ...prev, measurements: [...withoutThis, recorded] };
         });
       } catch (err) {
         setBanner(trpcErrorMessage(err, "Couldn't sync — saved locally, will retry"));
@@ -270,16 +279,22 @@ export default function InspectSheetScreen() {
   }, [parsedValue, dimension, id, currentSample, flushValue]);
 
   const goToCell = async (idx: number) => {
-    await commitCurrentValue();
-    setCellIdx(Math.max(0, Math.min(idx, walkOrder.length - 1)));
+    if (navBusyRef.current || saving || completing) return;
+    navBusyRef.current = true;
+    try {
+      await commitCurrentValue();
+      setCellIdx(Math.max(0, Math.min(idx, walkOrder.length - 1)));
+    } finally {
+      navBusyRef.current = false;
+    }
   };
 
-  const goNext = () => {
-    if (safeCellIdx < walkOrder.length - 1) goToCell(safeCellIdx + 1);
+  const goNext = async () => {
+    if (safeCellIdx < walkOrder.length - 1) await goToCell(safeCellIdx + 1);
   };
 
-  const goPrev = () => {
-    if (safeCellIdx > 0) goToCell(safeCellIdx - 1);
+  const goPrev = async () => {
+    if (safeCellIdx > 0) await goToCell(safeCellIdx - 1);
   };
 
   const goToPiece = async (pieceIndex: number) => {
@@ -328,13 +343,24 @@ export default function InspectSheetScreen() {
     setCompleting(true);
     setBanner(null);
     try {
-      const unsynced = getUnsyncedEntries(draft);
+      await commitCurrentValue();
+      const latestDraft = await loadDraft(id);
+      const unsynced = getUnsyncedEntries(latestDraft);
       for (const entry of unsynced) {
-        await trpc.sheets.recordMeasurement.mutate({
+        const recorded = await trpc.sheets.recordMeasurement.mutate({
           dataSheetId: id,
           dimensionId: entry.dimensionId,
           sampleIndex: entry.sampleIndex,
           value: entry.value,
+        });
+        await markSynced(id, entry.dimensionId, entry.sampleIndex);
+        setDetail((prev) => {
+          if (!prev) return prev;
+          const withoutThis = prev.measurements.filter(
+            (m) =>
+              !(m.dimensionId === entry.dimensionId && m.sampleIndex === entry.sampleIndex),
+          );
+          return { ...prev, measurements: [...withoutThis, recorded] };
         });
       }
       await trpc.sheets.complete.mutate({ dataSheetId: id });
@@ -419,7 +445,10 @@ export default function InspectSheetScreen() {
               disposition={
                 entry.pieceIndex === current.pieceIndex ? undefined : done ? "green" : null
               }
-              onPress={() => goToPiece(entry.pieceIndex)}
+              disabled={saving || completing}
+              onPress={() => {
+                void goToPiece(entry.pieceIndex);
+              }}
             />
           );
         })}
@@ -438,7 +467,10 @@ export default function InspectSheetScreen() {
               label={dim.balloonNumber ? `#${dim.balloonNumber} ${dim.name}` : dim.name}
               active={dim.id === dimension.id}
               disposition={dim.id === dimension.id ? undefined : measured ? "green" : null}
-              onPress={() => goToDimensionOnPiece(dim.id)}
+              disabled={saving || completing}
+              onPress={() => {
+                void goToDimensionOnPiece(dim.id);
+              }}
             />
           );
         })}
@@ -460,9 +492,11 @@ export default function InspectSheetScreen() {
           value={inputText}
           onChangeText={onChangeValue}
           onBlur={() => {
-            commitCurrentValue();
+            void commitCurrentValue();
           }}
-          onSubmitEditing={goNext}
+          onSubmitEditing={() => {
+            void goNext();
+          }}
           keyboardType="decimal-pad"
           placeholder="0.000"
           placeholderTextColor={palette.onFill + "88"}
@@ -480,11 +514,27 @@ export default function InspectSheetScreen() {
       </View>
 
       <View style={styles.sampleNavRow}>
-        <PrimaryButton label="‹ Prev" onPress={goPrev} variant="secondary" style={styles.navBtn} />
+        <PrimaryButton
+          label="‹ Prev"
+          onPress={() => {
+            void goPrev();
+          }}
+          variant="secondary"
+          style={styles.navBtn}
+          disabled={saving || completing || safeCellIdx <= 0}
+        />
         <Text style={styles.navCenter}>
           {safeCellIdx + 1} / {walkOrder.length}
         </Text>
-        <PrimaryButton label="Next ›" onPress={goNext} variant="secondary" style={styles.navBtn} />
+        <PrimaryButton
+          label="Next ›"
+          onPress={() => {
+            void goNext();
+          }}
+          variant="secondary"
+          style={styles.navBtn}
+          disabled={saving || completing || safeCellIdx >= walkOrder.length - 1}
+        />
       </View>
 
       <View style={styles.statsRow}>
@@ -504,7 +554,7 @@ export default function InspectSheetScreen() {
                   : "bad"
           }
         />
-        <StatCard label="Cp" value={capability?.cp != null ? capability.cp.toFixed(2) : "—"} />
+        <StatCard label="Pp" value={capability?.cp != null ? capability.cp.toFixed(2) : "—"} />
       </View>
 
       {banner ? <Text style={styles.banner}>{banner}</Text> : null}

@@ -13,9 +13,10 @@
  *
  * `auth.*` and `parts.*` below match the routers that exist today in
  * `apps/api/src/routers` field-for-field (including reusing the same zod
- * schemas from `@datasheets/core`). `sheets.*` and `dashboard.*` describe
- * the contract this app expects — implement those routers server-side
- * (see the README) and these pages light up with no frontend changes.
+ * schemas from `@datasheets/core`). `sheets.*`, `dashboard.overview`, and
+ * `exports.generate` describe the contract this app expects — implement
+ * those routers server-side (see the README) and these pages light up with
+ * no frontend changes.
  */
 import { initTRPC } from "@trpc/server";
 import superjson from "superjson";
@@ -131,46 +132,6 @@ export interface Measurement {
   measuredAt: string;
 }
 
-export interface PartWithLatestCapability {
-  part: Part;
-  releasedRevision: PartRevision | null;
-  worstCpk: number | null;
-  worstDisposition: Disposition | null;
-  openSheets: number;
-}
-
-export interface AlertItem {
-  id: string;
-  severity: "yellow" | "red";
-  partNumber: string;
-  dimensionName: string;
-  message: string;
-  dataSheetId: string;
-  createdAt: string;
-}
-
-export interface DashboardSummary {
-  kpis: {
-    activeSheets: number;
-    completedThisWeek: number;
-    partsInProduction: number;
-    openAlerts: number;
-  };
-  alerts: AlertItem[];
-  parts: PartWithLatestCapability[];
-  inProgressSheets: Array<{
-    id: string;
-    partNumber: string;
-    rev: string;
-    lotNumber: string;
-    lotSize: number;
-    measuredCount: number;
-    requiredCount: number;
-    createdAt: string;
-  }>;
-  cpkTrend: Array<{ label: string; cpk: number | null }>;
-}
-
 /** Matches `dashboard.overview` from apps/api */
 export interface DashboardOverview {
   counts: {
@@ -207,20 +168,16 @@ export interface DashboardOverview {
   }>;
 }
 
+/** Matches `sheets.list` row shape from apps/api */
 export interface SheetListRow {
-  id: string;
-  partNumber: string;
-  rev: string;
-  lotNumber: string;
-  lotSize: number;
-  status: SheetStatus;
-  createdAt: string;
-  completedAt: string | null;
+  sheet: DataSheet;
+  revision: PartRevision;
+  part: Part;
 }
 
 export interface SheetDetail {
   sheet: DataSheet;
-  part: Part;
+  part: Part | null;
   revision: PartRevision;
   dimensions: Dimension[];
   measurements: Measurement[];
@@ -354,11 +311,7 @@ const appRouter = t.router({
   sheets: t.router({
     list: t.procedure
       .input(z.object({ status: z.enum(["in_progress", "completed", "abandoned"]).optional() }).optional())
-      .query(
-        notImplemented("sheets.list") as () => Promise<
-          Array<{ sheet: DataSheet; revision: PartRevision; part: Part }>
-        >,
-      ),
+      .query(notImplemented("sheets.list") as () => Promise<SheetListRow[]>),
     create: t.procedure
       .input(CreateDataSheetSchema)
       .mutation(

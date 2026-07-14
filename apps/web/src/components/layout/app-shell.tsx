@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import Link from "next/link";
 import {
   LayoutDashboard,
   Boxes,
@@ -15,7 +14,7 @@ import {
 } from "lucide-react";
 import { NavLink } from "./nav-link";
 import { useSession } from "@/hooks/use-session";
-import { getToken } from "@/lib/auth";
+import { clearToken, getToken } from "@/lib/auth";
 
 const NAV_ITEMS = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
@@ -33,38 +32,18 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     if (typeof window === "undefined") return;
     if (!getToken()) {
       router.replace("/login");
+      return;
     }
-  }, [router]);
+    if (!isLoading && !isAuthenticated) {
+      clearToken();
+      router.replace("/login");
+    }
+  }, [router, isLoading, isAuthenticated]);
 
-  if (!hasToken) {
+  if (!hasToken || isLoading || !isAuthenticated) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-[#f8f8f7]">
         <Loader2 className="h-5 w-5 animate-spin text-zinc-400" />
-      </div>
-    );
-  }
-
-  if (isLoading) {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-[#f8f8f7]">
-        <Loader2 className="h-5 w-5 animate-spin text-zinc-400" />
-      </div>
-    );
-  }
-
-  if (!isAuthenticated) {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-[#f8f8f7] px-6">
-        <div className="max-w-sm text-center">
-          <p className="text-sm font-medium text-zinc-900">Your session has expired</p>
-          <p className="mt-1 text-sm text-zinc-500">Sign in again to continue.</p>
-          <Link
-            href="/login"
-            className="mt-4 inline-flex h-9 items-center rounded-md bg-zinc-900 px-4 text-sm font-medium text-white hover:bg-zinc-800"
-          >
-            Back to sign in
-          </Link>
-        </div>
       </div>
     );
   }

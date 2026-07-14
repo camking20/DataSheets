@@ -21,6 +21,35 @@ import {
 } from "@datasheets/core";
 import { router, tenantProcedure, asTenant } from "../trpc.js";
 
+type DimensionRow = typeof dimensions.$inferSelect;
+type MeasurementRow = typeof measurements.$inferSelect;
+
+function capabilityForDimension(
+  dim: DimensionRow,
+  current: MeasurementRow[],
+  lotSize: number,
+) {
+  const planIndices = new Set(
+    generateSampleIndices(lotSize, {
+      type: dim.frequencyType,
+      n: dim.frequencyN,
+    }),
+  );
+  const dimConfig = {
+    nominal: dim.nominal,
+    usl: dim.usl,
+    lsl: dim.lsl,
+    warningFraction: dim.warningFraction,
+  };
+  const dimMeasurements = current.filter(
+    (m) => m.dimensionId === dim.id && planIndices.has(m.sampleIndex),
+  );
+  const values = dimMeasurements.map((m) => m.value);
+  // Recompute from current dim limits so % yellow/red reflect config, not stale stored dispositions.
+  const dispositions = values.map((v) => evaluateDisposition(v, dimConfig));
+  return roundCapability(computeCapability(values, dimConfig, dispositions));
+}
+
 export const sheetsRouter = router({
   create: tenantProcedure
     .input(CreateDataSheetSchema)
@@ -212,6 +241,13 @@ export const sheetsRouter = router({
           });
         }
 
+        if (!Number.isFinite(input.value)) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "Measurement value must be a finite number",
+          });
+        }
+
         const [dim] = await tx
           .select()
           .from(dimensions)
@@ -219,6 +255,28 @@ export const sheetsRouter = router({
           .limit(1);
         if (!dim) {
           throw new TRPCError({ code: "NOT_FOUND", message: "Dimension not found" });
+        }
+        if (dim.partRevisionId !== sheet.partRevisionId) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "Dimension does not belong to this sheet's part revision",
+          });
+        }
+        if (input.sampleIndex >= sheet.lotSize) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: `Sample index ${input.sampleIndex} is outside lot size ${sheet.lotSize}`,
+          });
+        }
+        const allowedIndices = generateSampleIndices(sheet.lotSize, {
+          type: dim.frequencyType,
+          n: dim.frequencyN,
+        });
+        if (!allowedIndices.includes(input.sampleIndex)) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: `Sample index ${input.sampleIndex} is not in the sample plan for this dimension`,
+          });
         }
 
         const disposition = evaluateDisposition(input.value, {
@@ -228,6 +286,8 @@ export const sheetsRouter = router({
           warningFraction: dim.warningFraction,
         });
 
+        // Lock current row (if any), clear is_current before insert so the
+        // partial unique index (measurements_one_current_uq) is never violated.
         const [existing] = await tx
           .select()
           .from(measurements)
@@ -239,7 +299,15 @@ export const sheetsRouter = router({
               eq(measurements.isCurrent, true),
             ),
           )
-          .limit(1);
+          .limit(1)
+          .for("update");
+
+        if (existing) {
+          await tx
+            .update(measurements)
+            .set({ isCurrent: false })
+            .where(eq(measurements.id, existing.id));
+        }
 
         const [inserted] = await tx
           .insert(measurements)
@@ -257,7 +325,7 @@ export const sheetsRouter = router({
         if (existing) {
           await tx
             .update(measurements)
-            .set({ isCurrent: false, supersededBy: inserted!.id })
+            .set({ supersededBy: inserted!.id })
             .where(eq(measurements.id, existing.id));
         }
 
@@ -293,21 +361,7 @@ export const sheetsRouter = router({
           );
 
         return dims.map((dim) => {
-          const dimMeasurements = current.filter((m) => m.dimensionId === dim.id);
-          const values = dimMeasurements.map((m) => m.value);
-          const dispositions = dimMeasurements.map((m) => m.disposition);
-          const result = roundCapability(
-            computeCapability(
-              values,
-              {
-                nominal: dim.nominal,
-                usl: dim.usl,
-                lsl: dim.lsl,
-                warningFraction: dim.warningFraction,
-              },
-              dispositions,
-            ),
-          );
+          const result = capabilityForDimension(dim, current, sheet.lotSize);
           return { dimensionId: dim.id, dimensionName: dim.name, ...result };
         });
       });
@@ -399,29 +453,10 @@ export const sheetsRouter = router({
           });
         }
 
-        const [updated] = await tx
-          .update(dataSheets)
-          .set({ status: "completed", completedAt: new Date(), updatedAt: new Date() })
-          .where(eq(dataSheets.id, sheet.id))
-          .returning();
-
+        // Write snapshots while status is still in_progress, then flip status last.
         const snapshots = [];
         for (const dim of dims) {
-          const dimMeasurements = current.filter((m) => m.dimensionId === dim.id);
-          const values = dimMeasurements.map((m) => m.value);
-          const dispositions = dimMeasurements.map((m) => m.disposition);
-          const result = roundCapability(
-            computeCapability(
-              values,
-              {
-                nominal: dim.nominal,
-                usl: dim.usl,
-                lsl: dim.lsl,
-                warningFraction: dim.warningFraction,
-              },
-              dispositions,
-            ),
-          );
+          const result = capabilityForDimension(dim, current, sheet.lotSize);
 
           const [snapshot] = await tx
             .insert(capabilitySnapshots)
@@ -458,6 +493,23 @@ export const sheetsRouter = router({
           snapshots.push(snapshot!);
         }
 
+        const [updated] = await tx
+          .update(dataSheets)
+          .set({ status: "completed", completedAt: new Date(), updatedAt: new Date() })
+          .where(
+            and(
+              eq(dataSheets.id, sheet.id),
+              eq(dataSheets.status, "in_progress"),
+            ),
+          )
+          .returning();
+        if (!updated) {
+          throw new TRPCError({
+            code: "CONFLICT",
+            message: "Sheet was completed by another request",
+          });
+        }
+
         await tx.insert(auditLogs).values({
           companyId: ctx.companyId,
           actorId: ctx.auth.user.id,
@@ -467,7 +519,7 @@ export const sheetsRouter = router({
           metadata: { force: input.force, missingDimensions: missing.length },
         });
 
-        return { sheet: updated!, snapshots };
+        return { sheet: updated, snapshots };
       });
     }),
 });

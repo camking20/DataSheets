@@ -161,9 +161,9 @@ export default function DashboardPage() {
               <CardHeader>
                 <div>
                   <CardTitle className="flex items-center gap-1.5">
-                    <TrendingUp className="h-3.5 w-3.5" /> Latest Cpk
+                    <TrendingUp className="h-3.5 w-3.5" /> Latest Ppk
                   </CardTitle>
-                  <CardDescription>Recent capability snapshots by part.</CardDescription>
+                  <CardDescription>Recent capability snapshots by part (overall sigma).</CardDescription>
                 </div>
               </CardHeader>
               <CardContent>
@@ -195,8 +195,10 @@ export default function DashboardPage() {
           <Card>
             <CardHeader>
               <div>
-                <CardTitle>Parts &amp; latest Cpk</CardTitle>
-                <CardDescription>Worst-case capability from latest snapshots.</CardDescription>
+                <CardTitle>Parts &amp; latest Ppk</CardTitle>
+                <CardDescription>
+                  Worst-case overall capability (Ppk) from latest snapshots.
+                </CardDescription>
               </div>
             </CardHeader>
             <CardContent className="p-0">
@@ -223,7 +225,7 @@ export default function DashboardPage() {
                         {p.disposition ? (
                           <span className="flex items-center gap-1.5 text-sm font-medium tabular text-zinc-900">
                             <DispositionDot disposition={p.disposition} />
-                            Cpk {formatNumber(p.worstCpk, 2)}
+                            Ppk {formatNumber(p.worstCpk, 2)}
                           </span>
                         ) : (
                           <Badge tone="neutral">No data</Badge>

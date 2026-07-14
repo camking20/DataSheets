@@ -7,6 +7,22 @@ function hashPassword(password: string): string {
   return `scrypt:${salt}:${hash}`;
 }
 
+function resolveSeedPassword(): string {
+  const fromEnv = process.env.SEED_PASSWORD;
+  if (fromEnv && fromEnv.length > 0) {
+    return fromEnv;
+  }
+  if (process.env.NODE_ENV === "production") {
+    throw new Error(
+      "SEED_PASSWORD is required when NODE_ENV=production. Refusing to seed with a default password.",
+    );
+  }
+  console.warn(
+    "SEED_PASSWORD unset — using default password123 (non-production only).",
+  );
+  return "password123";
+}
+
 async function main() {
   const url =
     process.env.DATABASE_URL ??
@@ -17,7 +33,8 @@ async function main() {
   // Seed as owner (bypass RLS)
   await sql`SET ROLE datasheets_owner`;
 
-  const passwordHash = hashPassword("password123");
+  const seedPassword = resolveSeedPassword();
+  const passwordHash = hashPassword(seedPassword);
 
   const [companyA] = await sql`
     INSERT INTO companies (name, slug, settings)
@@ -125,9 +142,9 @@ async function main() {
   console.log("Seed complete.");
   console.log("  Company A:", companyA!.name, companyA!.id);
   console.log("  Company B:", companyB!.name, companyB!.id);
-  console.log("  Login: admin@precision.local / password123");
-  console.log("  Login: operator@precision.local / password123");
-  console.log("  Login: admin@apex.local / password123 (other tenant)");
+  console.log(`  Login: admin@precision.local / ${seedPassword}`);
+  console.log(`  Login: operator@precision.local / ${seedPassword}`);
+  console.log(`  Login: admin@apex.local / ${seedPassword} (other tenant)`);
   // silence unused
   void createHash;
 }

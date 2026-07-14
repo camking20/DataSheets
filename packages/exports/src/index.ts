@@ -15,6 +15,17 @@ export interface ExportMeasurement {
   disposition: "green" | "yellow" | "red";
 }
 
+export interface ExportCapabilityRow {
+  dimensionName: string;
+  n: number;
+  mean: number | null;
+  stdDev: number | null;
+  pp: number | null;
+  ppk: number | null;
+  percentYellow: number;
+  percentRed: number;
+}
+
 export interface ExportSheetPayload {
   companyName: string;
   partNumber: string;
@@ -27,7 +38,11 @@ export interface ExportSheetPayload {
   completedAt: string | null;
   dimensions: ExportDimension[];
   measurements: ExportMeasurement[];
+  capabilities?: ExportCapabilityRow[];
 }
+
+/** @deprecated Prefer ExportSheetPayload; alias kept for clarity with export APIs. */
+export type ExportPayload = ExportSheetPayload;
 
 const dispositionColor: Record<string, string> = {
   green: "22C55E",
@@ -35,16 +50,93 @@ const dispositionColor: Record<string, string> = {
   red: "EF4444",
 };
 
+const FORMULA_INJECTION_RE = /^[=+\-@\t\r]/;
+
+/** Format a measurement with precision derived from tolerance span, else 4 decimals. */
+export function formatMeasurementValue(value: number, dim: ExportDimension): string {
+  const span =
+    dim.usl != null && dim.lsl != null
+      ? Math.abs(dim.usl - dim.lsl)
+      : dim.usl != null
+        ? Math.abs(dim.usl - dim.nominal)
+        : dim.lsl != null
+          ? Math.abs(dim.nominal - dim.lsl)
+          : null;
+
+  let decimals = 4;
+  if (span != null && span > 0 && Number.isFinite(span)) {
+    const order = Math.floor(Math.log10(span));
+    // Resolve ~0.1% of tolerance band; clamp to a practical range.
+    decimals = Math.min(6, Math.max(2, 3 - order));
+  }
+
+  return value.toFixed(decimals);
+}
+
+function formatNullable(value: number | null, digits = 4): string {
+  if (value == null || !Number.isFinite(value)) return "";
+  return value.toFixed(digits);
+}
+
+function formatPercent(value: number): string {
+  return `${(Math.round(value * 100) / 100).toFixed(2)}%`;
+}
+
+/**
+ * Escape a CSV cell. Prefixes formula-like leading characters with `'`
+ * so spreadsheet apps treat the cell as text.
+ */
+export function csvEscape(v: string | number | null | undefined): string {
+  let s = v == null ? "" : String(v);
+  if (FORMULA_INJECTION_RE.test(s)) {
+    s = `'${s}`;
+  }
+  if (/[",\n\r]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
+  return s;
+}
+
 export function toCsv(payload: ExportSheetPayload): string {
   const lines: string[] = [];
   lines.push(`Company,${csvEscape(payload.companyName)}`);
   lines.push(`Part Number,${csvEscape(payload.partNumber)}`);
   lines.push(`Revision,${csvEscape(payload.revision)}`);
   lines.push(`Lot Number,${csvEscape(payload.lotNumber)}`);
-  lines.push(`Lot Size,${payload.lotSize}`);
+  lines.push(`Lot Size,${csvEscape(payload.lotSize)}`);
   lines.push(`Operator,${csvEscape(payload.operatorName ?? "")}`);
   lines.push(`Completed,${csvEscape(payload.completedAt ?? "")}`);
   lines.push("");
+
+  if (payload.capabilities && payload.capabilities.length > 0) {
+    lines.push("Capability summary");
+    lines.push(
+      [
+        "Dimension",
+        "n",
+        "Mean",
+        "Std Dev",
+        "Pp",
+        "Ppk",
+        "% Yellow",
+        "% Red",
+      ].join(","),
+    );
+    for (const row of payload.capabilities) {
+      lines.push(
+        [
+          csvEscape(row.dimensionName),
+          csvEscape(row.n),
+          csvEscape(formatNullable(row.mean)),
+          csvEscape(formatNullable(row.stdDev)),
+          csvEscape(formatNullable(row.pp)),
+          csvEscape(formatNullable(row.ppk)),
+          csvEscape(formatPercent(row.percentYellow)),
+          csvEscape(formatPercent(row.percentRed)),
+        ].join(","),
+      );
+    }
+    lines.push("");
+  }
+
   lines.push(
     ["Dimension", "Balloon", "Sample #", "Value", "Unit", "LSL", "Nominal", "USL", "Disposition"].join(","),
   );
@@ -59,23 +151,18 @@ export function toCsv(payload: ExportSheetPayload): string {
         [
           csvEscape(dim.name),
           csvEscape(dim.balloonNumber ?? ""),
-          String(m.sampleIndex + 1),
-          String(m.value),
+          csvEscape(m.sampleIndex + 1),
+          csvEscape(formatMeasurementValue(m.value, dim)),
           csvEscape(dim.unit),
-          dim.lsl ?? "",
-          dim.nominal,
-          dim.usl ?? "",
-          m.disposition,
+          csvEscape(dim.lsl ?? ""),
+          csvEscape(dim.nominal),
+          csvEscape(dim.usl ?? ""),
+          csvEscape(m.disposition),
         ].join(","),
       );
     }
   }
   return lines.join("\n");
-}
-
-function csvEscape(v: string): string {
-  if (/[",\n]/.test(v)) return `"${v.replace(/"/g, '""')}"`;
-  return v;
 }
 
 export async function toExcel(payload: ExportSheetPayload): Promise<Buffer> {
@@ -94,6 +181,34 @@ export async function toExcel(payload: ExportSheetPayload): Promise<Buffer> {
   ws.addRow(["Operator", payload.operatorName ?? ""]);
   ws.addRow(["Completed", payload.completedAt ?? ""]);
   ws.addRow([]);
+
+  if (payload.capabilities && payload.capabilities.length > 0) {
+    ws.addRow(["Capability summary"]);
+    const capHeader = ws.addRow([
+      "Dimension",
+      "n",
+      "Mean",
+      "Std Dev",
+      "Pp",
+      "Ppk",
+      "% Yellow",
+      "% Red",
+    ]);
+    capHeader.font = { bold: true };
+    for (const row of payload.capabilities) {
+      ws.addRow([
+        row.dimensionName,
+        row.n,
+        row.mean,
+        row.stdDev,
+        row.pp,
+        row.ppk,
+        Math.round(row.percentYellow * 100) / 100,
+        Math.round(row.percentRed * 100) / 100,
+      ]);
+    }
+    ws.addRow([]);
+  }
 
   const header = ws.addRow([
     "Dimension",
@@ -117,7 +232,7 @@ export async function toExcel(payload: ExportSheetPayload): Promise<Buffer> {
         dim.name,
         dim.balloonNumber ?? "",
         m.sampleIndex + 1,
-        m.value,
+        Number(formatMeasurementValue(m.value, dim)),
         dim.unit,
         dim.lsl,
         dim.nominal,
@@ -151,6 +266,20 @@ export async function toPdf(payload: ExportSheetPayload): Promise<Buffer> {
     doc.on("end", () => resolve(Buffer.concat(chunks)));
     doc.on("error", reject);
 
+    const bottomMargin = 50;
+    const pageBottom = () => doc.page.height - bottomMargin;
+
+    function ensureSpace(needed: number) {
+      if (doc.y + needed > pageBottom()) {
+        doc.addPage();
+      }
+    }
+
+    function writeLine(text: string) {
+      ensureSpace(14);
+      doc.text(text);
+    }
+
     doc.fontSize(18).text("Inspection Data Sheet", { align: "center" });
     doc.moveDown(0.5);
     doc.fontSize(10);
@@ -168,11 +297,30 @@ export async function toPdf(payload: ExportSheetPayload): Promise<Buffer> {
       ["Completed", payload.completedAt ?? "—"],
     ];
     for (const [k, v] of meta) {
+      ensureSpace(14);
       doc.font("Helvetica-Bold").text(`${k}: `, { continued: true });
       doc.font("Helvetica").text(v);
     }
 
+    if (payload.capabilities && payload.capabilities.length > 0) {
+      doc.moveDown();
+      ensureSpace(28);
+      doc.font("Helvetica-Bold").fontSize(12).text("Capability summary");
+      doc.moveDown(0.4);
+      doc.fontSize(9);
+      for (const row of payload.capabilities) {
+        ensureSpace(36);
+        doc
+          .font("Helvetica-Bold")
+          .text(row.dimensionName);
+        doc.font("Helvetica").text(
+          `  n=${row.n}  mean=${formatNullable(row.mean) || "—"}  s=${formatNullable(row.stdDev) || "—"}  Pp=${formatNullable(row.pp) || "—"}  Ppk=${formatNullable(row.ppk) || "—"}  yellow=${formatPercent(row.percentYellow)}  red=${formatPercent(row.percentRed)}`,
+        );
+      }
+    }
+
     doc.moveDown();
+    ensureSpace(28);
     doc.font("Helvetica-Bold").fontSize(12).text("Measurements");
     doc.moveDown(0.5);
     doc.fontSize(9);
@@ -186,6 +334,7 @@ export async function toPdf(payload: ExportSheetPayload): Promise<Buffer> {
         .filter(Boolean)
         .join(" / ");
 
+      ensureSpace(28);
       doc
         .font("Helvetica-Bold")
         .text(
@@ -198,11 +347,11 @@ export async function toPdf(payload: ExportSheetPayload): Promise<Buffer> {
         .sort((a, b) => a.sampleIndex - b.sampleIndex);
 
       if (ms.length === 0) {
-        doc.text("  (no measurements)");
+        writeLine("  (no measurements)");
       } else {
         for (const m of ms) {
-          doc.text(
-            `  Piece ${m.sampleIndex + 1}: ${m.value}  [${m.disposition.toUpperCase()}]`,
+          writeLine(
+            `  Piece ${m.sampleIndex + 1}: ${formatMeasurementValue(m.value, dim)}  [${m.disposition.toUpperCase()}]`,
           );
         }
       }
@@ -210,6 +359,16 @@ export async function toPdf(payload: ExportSheetPayload): Promise<Buffer> {
     }
 
     doc.moveDown();
+    ensureSpace(90);
+    doc.font("Helvetica-Bold").fontSize(10).fillColor("#000").text("Approvals");
+    doc.moveDown(0.6);
+    doc.font("Helvetica").fontSize(9);
+    doc.text("Inspector: ___________________________    Date: ______________");
+    doc.moveDown(0.8);
+    doc.text("Reviewer:  ___________________________    Date: ______________");
+
+    doc.moveDown(1.5);
+    ensureSpace(20);
     doc.fontSize(8).fillColor("#666").text("Generated by DataSheets", {
       align: "center",
     });

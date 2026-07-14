@@ -6,6 +6,7 @@ import postgres from "postgres";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 async function main() {
+  // Migrations require a superuser (or owner-capable) connection — not datasheets_runtime.
   const url =
     process.env.DATABASE_URL ??
     "postgresql://datasheets:datasheets@localhost:5432/datasheets";
@@ -40,20 +41,41 @@ async function main() {
     await sql`INSERT INTO _migrations (id) VALUES (${file})`;
   }
 
-  // Ensure login role can SET ROLE to app / owner for tenancy
+  // Ensure API runtime role exists and can only assume datasheets_app (INHERIT FALSE).
+  // Never grant datasheets_owner to datasheets_runtime.
   try {
     await sql.unsafe(`
       DO $$
-      DECLARE
-        current_user_name text := current_user;
       BEGIN
-        EXECUTE format('GRANT datasheets_owner TO %I', current_user_name);
-        EXECUTE format('GRANT datasheets_app TO %I', current_user_name);
+        IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'datasheets_runtime') THEN
+          CREATE ROLE datasheets_runtime
+            LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS NOINHERIT
+            PASSWORD 'datasheets_runtime';
+        END IF;
+        IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'datasheets_migrate') THEN
+          CREATE ROLE datasheets_migrate NOLOGIN NOSUPERUSER NOBYPASSRLS;
+        END IF;
       END $$;
     `);
+    await sql.unsafe(`
+      ALTER ROLE datasheets_runtime WITH NOINHERIT;
+      GRANT CONNECT ON DATABASE datasheets TO datasheets_runtime;
+      GRANT USAGE ON SCHEMA public TO datasheets_runtime;
+      GRANT datasheets_app TO datasheets_runtime WITH INHERIT FALSE;
+      GRANT datasheets_owner TO datasheets_migrate;
+      REVOKE datasheets_owner FROM datasheets_runtime;
+    `);
+    console.log(
+      "Runtime role ready: datasheets_runtime → datasheets_app (INHERIT FALSE); owner not granted.",
+    );
   } catch (e) {
-    console.warn("Could not grant roles to current user:", e);
+    console.warn("Could not ensure datasheets_runtime role:", e);
   }
+
+  // Do NOT grant datasheets_owner to the connecting user for the API path.
+  // Seed/migrate should connect as the container superuser (`datasheets`), which
+  // can SET ROLE datasheets_owner without a membership grant. Prefer granting
+  // owner only to datasheets_migrate for non-superuser migration tooling.
 
   await sql.end();
   console.log("Migrations complete.");

@@ -36,21 +36,15 @@ import { DispositionBadge, DispositionDot } from "@/components/DispositionBadge"
 import { cn, downloadBase64, formatDate, formatNumber } from "@/lib/utils";
 import { formatApiError } from "@/lib/errors";
 import type {
-  DataSheet,
   Dimension,
   Disposition,
   ExportFileResult,
   Measurement,
-  Part,
-  PartRevision,
+  SheetDetail,
 } from "@/lib/api-types";
 
-type SheetDetailResult = {
-  sheet: DataSheet;
-  part: Part | null;
-  revision: PartRevision;
-  dimensions: Dimension[];
-  measurements: Measurement[];
+type SheetDetailResult = SheetDetail & {
+  samplePlan?: Array<{ dimensionId: string; sampleIndices: number[] }>;
 };
 
 const PAGE_SIZE = 20;
@@ -484,8 +478,17 @@ function MeasurementMatrix({
                     <div className="flex items-center justify-center gap-3 text-[11px]">
                       <MiniStat label="n" value={String(capability.n)} />
                       <MiniStat label="μ" value={formatNumber(capability.mean, 3)} />
-                      <MiniStat label="Cp" value={formatNumber(capability.cp, 2)} />
-                      <MiniStat label="Cpk" value={formatNumber(capability.cpk, 2)} emphasize />
+                      <MiniStat
+                        label="Pp"
+                        value={formatNumber(capability.cp, 2)}
+                        title="Pp — overall capability using sample standard deviation (overall / long-term sigma)"
+                      />
+                      <MiniStat
+                        label="Ppk"
+                        value={formatNumber(capability.cpk, 2)}
+                        emphasize
+                        title="Ppk — overall capability index using sample standard deviation (overall / long-term sigma)"
+                      />
                     </div>
                   </td>
                 </tr>
@@ -502,13 +505,15 @@ function MiniStat({
   label,
   value,
   emphasize,
+  title,
 }: {
   label: string;
   value: string;
   emphasize?: boolean;
+  title?: string;
 }) {
   return (
-    <div className="text-center">
+    <div className="text-center" title={title}>
       <p className="text-zinc-400">{label}</p>
       <p className={cn("tabular font-semibold text-zinc-900", emphasize && "text-emerald-700")}>
         {value}
@@ -540,37 +545,62 @@ function MatrixCell({
   const [disposition, setDisposition] = useState<Disposition | null>(existing?.disposition ?? null);
   const [flashing, setFlashing] = useState(false);
   const [lastSaved, setLastSaved] = useState<number | null>(existing?.value ?? null);
+  const [committedDisposition, setCommittedDisposition] = useState<Disposition | null>(
+    existing?.disposition ?? null,
+  );
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   // Sync from server when a measurement lands from elsewhere
   useEffect(() => {
     if (existing?.value != null && existing.value !== lastSaved) {
       setValue(String(existing.value));
       setDisposition(existing.disposition);
+      setCommittedDisposition(existing.disposition);
       setLastSaved(existing.value);
+      setSaveError(null);
     }
   }, [existing?.value, existing?.disposition, lastSaved]);
 
-  const record = trpc.sheets.recordMeasurement.useMutation({
-    onSuccess: (m: Measurement) => onSaved(m),
-  });
+  const record = trpc.sheets.recordMeasurement.useMutation();
 
   function commit(): boolean {
     const num = Number(value);
     if (value.trim() === "" || Number.isNaN(num)) return false;
     if (num === lastSaved) return true;
 
+    const rollbackValue = lastSaved != null ? String(lastSaved) : "";
+    const rollbackDisposition = committedDisposition;
     const nextDisposition = evaluateDisposition(num, dimension);
+
+    // Optimistic flash — lastSaved/disposition are not committed until onSuccess
     setDisposition(nextDisposition);
     setFlashing(true);
-    setLastSaved(num);
+    setSaveError(null);
     window.setTimeout(() => setFlashing(false), 280);
 
-    record.mutate({
-      dataSheetId: sheetId,
-      dimensionId: dimension.id,
-      sampleIndex,
-      value: num,
-    });
+    record.mutate(
+      {
+        dataSheetId: sheetId,
+        dimensionId: dimension.id,
+        sampleIndex,
+        value: num,
+      },
+      {
+        onSuccess: (m: Measurement) => {
+          setLastSaved(m.value);
+          setCommittedDisposition(m.disposition);
+          setDisposition(m.disposition);
+          setValue(String(m.value));
+          setSaveError(null);
+          onSaved(m);
+        },
+        onError: (err: unknown) => {
+          setValue(rollbackValue);
+          setDisposition(rollbackDisposition);
+          setSaveError(formatApiError(err, "Unable to save measurement."));
+        },
+      },
+    );
     return true;
   }
 
@@ -589,6 +619,7 @@ function MatrixCell({
         type="number"
         step="any"
         inputMode="decimal"
+        tabIndex={-1}
         disabled={readOnly}
         value={value}
         onChange={(e) => setValue(e.target.value)}
@@ -598,17 +629,28 @@ function MatrixCell({
         onKeyDown={handleKeyDown}
         placeholder="—"
         aria-label={`${dimension.name} piece ${sampleIndex + 1}`}
+        aria-invalid={saveError ? true : undefined}
+        title={saveError ?? undefined}
         className={cn(
           "h-11 w-full rounded-md border text-center text-base font-semibold tabular outline-none transition-colors",
           "focus:ring-2 disabled:cursor-not-allowed disabled:opacity-70",
           disposition ? cellTone[disposition] : "border-zinc-300 bg-white text-zinc-900",
           flashing && disposition ? flashClass[disposition] : "",
+          saveError && "ring-2 ring-rose-300",
         )}
       />
       {disposition ? (
         <div className="pointer-events-none absolute -bottom-0.5 left-1/2 -translate-x-1/2">
           <DispositionDot disposition={disposition} className="h-1.5 w-1.5" />
         </div>
+      ) : null}
+      {saveError ? (
+        <p
+          className="mt-0.5 max-w-[88px] text-center text-[9px] leading-tight text-rose-600 line-clamp-2"
+          title={saveError}
+        >
+          {saveError}
+        </p>
       ) : null}
     </div>
   );
@@ -629,9 +671,7 @@ function ExportButtons({ sheetId }: { sheetId: string }) {
       })) as ExportFileResult;
       downloadBase64(result.fileName, result.mimeType, result.base64);
     } catch (err) {
-      setError(
-        err instanceof Error ? err.message : "Export isn't available yet — check the API.",
-      );
+      setError(formatApiError(err, "Export isn't available yet — check the API."));
     } finally {
       setLoadingFormat(null);
     }

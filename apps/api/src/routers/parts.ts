@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { eq, and, desc, asc } from "drizzle-orm";
+import { eq, and, desc, asc, or, ilike } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 import {
   parts,
@@ -11,8 +11,11 @@ import {
   CreatePartSchema,
   CreateDimensionSchema,
   UpdateDimensionSchema,
+  dimensionGeometryError,
 } from "@datasheets/core";
 import { router, tenantProcedure, requireRoles, asTenant } from "../trpc.js";
+
+const PARTS_LIST_LIMIT = 50;
 
 export const partsRouter = router({
   list: tenantProcedure.query(async ({ ctx }) => {
@@ -21,25 +24,41 @@ export const partsRouter = router({
         .select()
         .from(parts)
         .where(eq(parts.isActive, true))
-        .orderBy(asc(parts.partNumber));
+        .orderBy(desc(parts.updatedAt))
+        .limit(PARTS_LIST_LIMIT);
     });
   }),
 
   search: tenantProcedure
-    .input(z.object({ q: z.string().min(1) }))
+    .input(z.object({ q: z.string() }))
     .query(async ({ ctx, input }) => {
       return asTenant(ctx.db, ctx.companyId, async (tx) => {
-        const all = await tx
+        const q = input.q.trim();
+        // Empty query → recent active parts (same as list).
+        if (!q) {
+          return tx
+            .select()
+            .from(parts)
+            .where(eq(parts.isActive, true))
+            .orderBy(desc(parts.updatedAt))
+            .limit(PARTS_LIST_LIMIT);
+        }
+
+        const pattern = `%${q}%`;
+        return tx
           .select()
           .from(parts)
-          .where(eq(parts.isActive, true))
-          .orderBy(asc(parts.partNumber));
-        const q = input.q.toLowerCase();
-        return all.filter(
-          (p) =>
-            p.partNumber.toLowerCase().includes(q) ||
-            (p.description?.toLowerCase().includes(q) ?? false),
-        );
+          .where(
+            and(
+              eq(parts.isActive, true),
+              or(
+                ilike(parts.partNumber, pattern),
+                ilike(parts.description, pattern),
+              ),
+            ),
+          )
+          .orderBy(asc(parts.partNumber))
+          .limit(PARTS_LIST_LIMIT);
       });
     }),
 
@@ -213,7 +232,8 @@ export const partsRouter = router({
           });
         }
 
-        // Supersede other released revs for this part
+        // Clear any currently released rev first so part_revisions_one_released_uq
+        // allows this promotion; then optimistic-lock the draft→released transition.
         await tx
           .update(partRevisions)
           .set({ status: "superseded", updatedAt: new Date() })
@@ -232,8 +252,20 @@ export const partsRouter = router({
             releasedBy: ctx.auth.user.id,
             updatedAt: new Date(),
           })
-          .where(eq(partRevisions.id, rev.id))
+          .where(
+            and(
+              eq(partRevisions.id, rev.id),
+              eq(partRevisions.status, "draft"),
+            ),
+          )
           .returning();
+
+        if (!updated) {
+          throw new TRPCError({
+            code: "CONFLICT",
+            message: "Revision is no longer a draft (already released or superseded)",
+          });
+        }
 
         await tx.insert(auditLogs).values({
           companyId: ctx.companyId,
@@ -243,7 +275,7 @@ export const partsRouter = router({
           entityId: rev.id,
         });
 
-        return updated!;
+        return updated;
       });
     }),
 
@@ -333,6 +365,18 @@ export const partsRouter = router({
           });
         }
 
+        const geometryError = dimensionGeometryError({
+          nominal: input.nominal,
+          usl: input.usl ?? null,
+          lsl: input.lsl ?? null,
+        });
+        if (geometryError) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: geometryError,
+          });
+        }
+
         const [dim] = await tx
           .insert(dimensions)
           .values({
@@ -380,6 +424,22 @@ export const partsRouter = router({
         }
 
         const { id, ...rest } = input;
+        const nextNominal =
+          rest.nominal !== undefined ? rest.nominal : dim.nominal;
+        const nextUsl = rest.usl !== undefined ? rest.usl : dim.usl;
+        const nextLsl = rest.lsl !== undefined ? rest.lsl : dim.lsl;
+        const geometryError = dimensionGeometryError({
+          nominal: nextNominal,
+          usl: nextUsl,
+          lsl: nextLsl,
+        });
+        if (geometryError) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: geometryError,
+          });
+        }
+
         const [updated] = await tx
           .update(dimensions)
           .set({

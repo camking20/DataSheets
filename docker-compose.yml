@@ -4,6 +4,7 @@ services:
     container_name: datasheets-postgres
     restart: unless-stopped
     environment:
+      # Container bootstrap superuser — use ONLY for migrate/seed, never the API.
       POSTGRES_USER: datasheets
       POSTGRES_PASSWORD: datasheets
       POSTGRES_DB: datasheets
@@ -20,6 +21,16 @@ services:
 volumes:
   datasheets_pgdata:
 
-# Note: container superuser is `datasheets` / `datasheets`. Use
-# DATABASE_URL=postgresql://datasheets:datasheets@localhost:5432/datasheets
-# `pnpm db:migrate` creates datasheets_owner / datasheets_app roles and grants.
+# Role separation (critical for tenant isolation):
+#
+#   Migrate / seed (superuser):
+#     DATABASE_URL=postgresql://datasheets:datasheets@localhost:5432/datasheets
+#     `pnpm db:migrate` applies SQL and creates datasheets_runtime / datasheets_app /
+#     datasheets_owner / datasheets_migrate. Dev password for datasheets_runtime is
+#     'datasheets_runtime' — override in production.
+#
+#   API runtime (NOBYPASSRLS, cannot SET ROLE datasheets_owner):
+#     DATABASE_URL=postgresql://datasheets_runtime:datasheets_runtime@localhost:5432/datasheets
+#     Role is granted datasheets_app WITH INHERIT FALSE — API must SET LOCAL ROLE
+#     datasheets_app inside transactions (see asTenant). Never SET ROLE datasheets_owner
+#     from the API (including auth register).

@@ -20,10 +20,38 @@ export default function RegisterPage() {
   const [slugTouched, setSlugTouched] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const verifyEmail = trpc.auth.verifyEmail.useMutation();
+  const login = trpc.auth.login.useMutation();
+
   const register = trpc.auth.register.useMutation({
-    onSuccess: (data: { token: string }) => {
-      setToken(data.token);
-      router.push("/dashboard");
+    onSuccess: async (data: {
+      emailVerificationRequired?: boolean;
+      devVerificationToken?: string;
+      user: { email: string };
+    }) => {
+      try {
+        // Local/dev: auto-verify with the returned token, then sign in.
+        if (data.devVerificationToken) {
+          await verifyEmail.mutateAsync({ token: data.devVerificationToken });
+          const session = await login.mutateAsync({
+            email: data.user.email,
+            password,
+          });
+          setToken(session.token);
+          router.push("/dashboard");
+          return;
+        }
+        setError(
+          "Account created. Check your email to verify before signing in.",
+        );
+      } catch (err) {
+        setError(
+          formatApiError(
+            err,
+            "Account created, but verification failed. Try signing in after verifying your email.",
+          ),
+        );
+      }
     },
     onError: (err) => {
       setError(formatApiError(err, "Unable to create your company. Please try again."));
@@ -38,6 +66,10 @@ export default function RegisterPage() {
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
+    if (password.length < 12) {
+      setError("Password must be at least 12 characters.");
+      return;
+    }
     register.mutate({
       name,
       email,
@@ -122,10 +154,10 @@ export default function RegisterPage() {
                 type="password"
                 autoComplete="new-password"
                 required
-                minLength={8}
+                minLength={12}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                placeholder="At least 8 characters"
+                placeholder="At least 12 characters"
               />
             </div>
 
@@ -135,7 +167,13 @@ export default function RegisterPage() {
               </p>
             ) : null}
 
-            <Button type="submit" className="w-full" isLoading={register.isPending}>
+            <Button
+              type="submit"
+              className="w-full"
+              isLoading={
+                register.isPending || verifyEmail.isPending || login.isPending
+              }
+            >
               Create company &amp; account
             </Button>
           </form>

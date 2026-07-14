@@ -63,22 +63,42 @@ export const companies = pgTable("companies", {
     .defaultNow(),
 });
 
-/** Auth users — better-auth compatible shape, no company_id (user can join multiple) */
-export const users = pgTable("users", {
-  id: uuid("id").primaryKey().default(sql`uuidv7()`),
-  email: text("email").notNull().unique(),
-  emailVerified: boolean("email_verified").notNull().default(false),
-  name: text("name").notNull(),
-  passwordHash: text("password_hash"),
-  image: text("image"),
-  createdAt: timestamp("created_at", { withTimezone: true })
-    .notNull()
-    .defaultNow(),
-  updatedAt: timestamp("updated_at", { withTimezone: true })
-    .notNull()
-    .defaultNow(),
-});
+/**
+ * Auth users — better-auth compatible shape, no company_id (user can join multiple).
+ * Global identity store: FORCE RLS with open datasheets_app policies (login by email).
+ * Not tenant-isolated by company_id; isolation is via memberships + tenant tables.
+ */
+export const users = pgTable(
+  "users",
+  {
+    id: uuid("id").primaryKey().default(sql`uuidv7()`),
+    email: text("email").notNull().unique(),
+    emailVerified: boolean("email_verified").notNull().default(false),
+    name: text("name").notNull(),
+    passwordHash: text("password_hash"),
+    image: text("image"),
+    emailVerificationToken: text("email_verification_token"),
+    emailVerificationExpires: timestamp("email_verification_expires", {
+      withTimezone: true,
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("users_email_verification_token_uidx")
+      .on(t.emailVerificationToken)
+      .where(sql`${t.emailVerificationToken} IS NOT NULL`),
+  ],
+);
 
+/**
+ * Sessions — global (FORCE RLS, open datasheets_app policies for token lookup).
+ * Prefer hashed tokens at rest; RLS alone does not scope sessions per tenant.
+ */
 export const sessions = pgTable("sessions", {
   id: uuid("id").primaryKey().default(sql`uuidv7()`),
   userId: uuid("user_id")
@@ -172,6 +192,9 @@ export const partRevisions = pgTable(
       t.partId,
       t.rev,
     ),
+    uniqueIndex("part_revisions_one_released_uq")
+      .on(t.companyId, t.partId)
+      .where(sql`${t.status} = 'released'`),
     index("part_revisions_part_idx").on(t.companyId, t.partId),
   ],
 );
@@ -237,9 +260,15 @@ export const dataSheets = pgTable(
   },
   (t) => [
     primaryKey({ columns: [t.companyId, t.id] }),
+    uniqueIndex("data_sheets_lot_uq").on(
+      t.companyId,
+      t.partRevisionId,
+      t.lotNumber,
+    ),
     index("data_sheets_revision_idx").on(t.companyId, t.partRevisionId),
     index("data_sheets_status_idx").on(t.companyId, t.status),
     check("data_sheets_lot_size_positive", sql`${t.lotSize} > 0`),
+    check("data_sheets_lot_size_max", sql`${t.lotSize} <= 10000`),
   ],
 );
 
@@ -270,6 +299,9 @@ export const measurements = pgTable(
   },
   (t) => [
     primaryKey({ columns: [t.companyId, t.id] }),
+    uniqueIndex("measurements_one_current_uq")
+      .on(t.companyId, t.dataSheetId, t.dimensionId, t.sampleIndex)
+      .where(sql`${t.isCurrent} = true`),
     index("measurements_sheet_idx").on(t.companyId, t.dataSheetId),
     index("measurements_current_idx").on(
       t.companyId,

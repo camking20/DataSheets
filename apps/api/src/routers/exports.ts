@@ -9,10 +9,22 @@ import {
   measurements,
   users,
   companies,
+  memberships,
   exportJobs,
   auditLogs,
 } from "@datasheets/db";
-import { toCsv, toExcel, toPdf, type ExportSheetPayload } from "@datasheets/exports";
+import {
+  computeCapability,
+  evaluateDisposition,
+  roundCapability,
+} from "@datasheets/core";
+import {
+  toCsv,
+  toExcel,
+  toPdf,
+  type ExportCapabilityRow,
+  type ExportSheetPayload,
+} from "@datasheets/exports";
 import { router, tenantProcedure, asTenant } from "../trpc.js";
 
 const ExportFormatSchema = z.enum(["csv", "excel", "pdf"]);
@@ -42,7 +54,7 @@ export const exportsRouter = router({
       }),
     )
     .mutation(async ({ ctx, input }) => {
-      const { sheet, part, exportPayload } = await asTenant(
+      const { sheet, part, exportPayload, jobId } = await asTenant(
         ctx.db,
         ctx.companyId,
         async (tx) => {
@@ -104,12 +116,45 @@ export const exportsRouter = router({
           let operatorName: string | null = null;
           if (sheet.operatorId) {
             const [operator] = await tx
-              .select()
+              .select({ name: users.name })
               .from(users)
+              .innerJoin(
+                memberships,
+                and(
+                  eq(memberships.userId, users.id),
+                  eq(memberships.companyId, ctx.companyId),
+                ),
+              )
               .where(eq(users.id, sheet.operatorId))
               .limit(1);
             operatorName = operator?.name ?? null;
           }
+
+          const capabilities: ExportCapabilityRow[] = dims.map((dim) => {
+            const dimMeasurements = currentMeasurements.filter(
+              (m) => m.dimensionId === dim.id,
+            );
+            const config = {
+              nominal: dim.nominal,
+              usl: dim.usl,
+              lsl: dim.lsl,
+              warningFraction: dim.warningFraction,
+            };
+            const values = dimMeasurements.map((m) => m.value);
+            const dispositions = values.map((v) => evaluateDisposition(v, config));
+            const result = roundCapability(computeCapability(values, config, dispositions));
+            return {
+              dimensionName: dim.name,
+              n: result.n,
+              mean: result.mean,
+              stdDev: result.stdDev,
+              // Overall (long-term) indices — labeled Pp/Ppk in exports
+              pp: result.pp,
+              ppk: result.ppk,
+              percentYellow: result.percentYellow,
+              percentRed: result.percentRed,
+            };
+          });
 
           const exportPayload: ExportSheetPayload = {
             companyName: company?.name ?? "",
@@ -136,46 +181,94 @@ export const exportsRouter = router({
               value: m.value,
               disposition: m.disposition,
             })),
+            capabilities,
           };
 
-          return { sheet, part, exportPayload };
+          const [job] = await tx
+            .insert(exportJobs)
+            .values({
+              companyId: ctx.companyId,
+              dataSheetId: sheet.id,
+              format: input.format,
+              status: "pending",
+              requestedBy: ctx.auth.user.id,
+            })
+            .returning({ id: exportJobs.id });
+
+          if (!job) {
+            throw new TRPCError({
+              code: "INTERNAL_SERVER_ERROR",
+              message: "Failed to create export job",
+            });
+          }
+
+          return { sheet, part, exportPayload, jobId: job.id };
         },
       );
 
-      let buffer: Buffer;
-      if (input.format === "csv") {
-        buffer = Buffer.from(toCsv(exportPayload), "utf-8");
-      } else if (input.format === "excel") {
-        buffer = await toExcel(exportPayload);
-      } else {
-        buffer = await toPdf(exportPayload);
-      }
-
       const fileName = `${sanitize(part.partNumber)}_${sanitize(sheet.lotNumber)}.${extensions[input.format]}`;
-      const base64 = buffer.toString("base64");
       const mimeType = mimeTypes[input.format];
 
-      await asTenant(ctx.db, ctx.companyId, async (tx) => {
-        await tx.insert(exportJobs).values({
-          companyId: ctx.companyId,
-          dataSheetId: sheet.id,
-          format: input.format,
-          status: "completed",
-          requestedBy: ctx.auth.user.id,
-          fileName,
-          completedAt: new Date(),
+      try {
+        let buffer: Buffer;
+        if (input.format === "csv") {
+          buffer = Buffer.from(toCsv(exportPayload), "utf-8");
+        } else if (input.format === "excel") {
+          buffer = await toExcel(exportPayload);
+        } else {
+          buffer = await toPdf(exportPayload);
+        }
+
+        const base64 = buffer.toString("base64");
+
+        await asTenant(ctx.db, ctx.companyId, async (tx) => {
+          await tx
+            .update(exportJobs)
+            .set({
+              status: "completed",
+              fileName,
+              completedAt: new Date(),
+              error: null,
+            })
+            .where(
+              and(eq(exportJobs.id, jobId), eq(exportJobs.companyId, ctx.companyId)),
+            );
+
+          await tx.insert(auditLogs).values({
+            companyId: ctx.companyId,
+            actorId: ctx.auth.user.id,
+            action: "export.generate",
+            entityType: "data_sheet",
+            entityId: sheet.id,
+            metadata: { format: input.format, fileName },
+          });
         });
 
-        await tx.insert(auditLogs).values({
-          companyId: ctx.companyId,
-          actorId: ctx.auth.user.id,
-          action: "export.generate",
-          entityType: "data_sheet",
-          entityId: sheet.id,
-          metadata: { format: input.format, fileName },
-        });
-      });
+        return { fileName, mimeType, base64 };
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        try {
+          await asTenant(ctx.db, ctx.companyId, async (tx) => {
+            await tx
+              .update(exportJobs)
+              .set({
+                status: "failed",
+                error: message,
+                completedAt: new Date(),
+              })
+              .where(
+                and(eq(exportJobs.id, jobId), eq(exportJobs.companyId, ctx.companyId)),
+              );
+          });
+        } catch {
+          // Prefer surfacing the original export failure.
+        }
 
-      return { fileName, mimeType, base64 };
+        if (err instanceof TRPCError) throw err;
+        throw new TRPCError({
+          code: "INTERNAL_SERVER_ERROR",
+          message: `Export failed: ${message}`,
+        });
+      }
     }),
 });

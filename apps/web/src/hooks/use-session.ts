@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { trpc } from "@/lib/trpc";
 import { clearToken, getToken } from "@/lib/auth";
@@ -25,6 +26,12 @@ export function useSession() {
   const utils = trpc.useUtils();
   const logoutMutation = trpc.auth.logout.useMutation();
 
+  useEffect(() => {
+    if (!query.isError) return;
+    clearToken();
+    router.replace("/login");
+  }, [query.isError, router]);
+
   async function logout() {
     try {
       await logoutMutation.mutateAsync();
@@ -39,7 +46,7 @@ export function useSession() {
   const me = query.data as MeResult | undefined;
 
   return {
-    isAuthenticated: hasToken && !query.isError,
+    isAuthenticated: hasToken && !query.isError && !!me,
     isLoading: hasToken ? query.isLoading : false,
     hasToken,
     me,

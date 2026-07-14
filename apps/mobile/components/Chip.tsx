@@ -7,10 +7,11 @@ interface ChipProps {
   active?: boolean;
   disposition?: Disposition | null;
   onPress?: () => void;
+  disabled?: boolean;
 }
 
 /** Small pill used for dimension tabs and sample navigation. */
-export function Chip({ label, active, disposition, onPress }: ChipProps) {
+export function Chip({ label, active, disposition, onPress, disabled }: ChipProps) {
   const palette = disposition !== undefined ? paletteFor(disposition) : null;
   const backgroundColor = palette ? (active ? palette.fill : palette.soft) : active ? colors.accent : colors.surfaceRaised;
   const textColor = palette ? (active ? palette.onFill : palette.onSoft) : active ? colors.accentText : colors.textSecondary;
@@ -19,8 +20,8 @@ export function Chip({ label, active, disposition, onPress }: ChipProps) {
   return (
     <Pressable
       onPress={onPress}
-      disabled={!onPress}
-      style={[styles.chip, { backgroundColor, borderColor }]}
+      disabled={disabled || !onPress}
+      style={[styles.chip, { backgroundColor, borderColor, opacity: disabled ? 0.5 : 1 }]}
     >
       <Text style={[styles.label, { color: textColor }]} numberOfLines={1}>
         {label}

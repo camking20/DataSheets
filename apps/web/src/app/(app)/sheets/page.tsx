@@ -6,13 +6,7 @@ import { trpc } from "@/lib/trpc";
 import { Card, CardContent } from "@/components/ui/card";
 import { SheetStatusPill } from "@/components/ui/status-pill";
 import { formatDateTime } from "@/lib/utils";
-import type { DataSheet, Part, PartRevision } from "@/lib/api-types";
-
-type SheetListRow = {
-  sheet: DataSheet;
-  revision: PartRevision;
-  part: Part;
-};
+import type { SheetListRow } from "@/lib/api-types";
 
 export default function SheetsPage() {
   const { data, isLoading, isError } = trpc.sheets.list.useQuery();

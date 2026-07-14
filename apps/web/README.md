@@ -31,18 +31,19 @@ cp .env.example .env.local
 | --- | --- |
 | `/` | Marketing landing page |
 | `/login`, `/register` | Auth — creates a session token stored in `localStorage` (`ds_token`) |
-| `/dashboard` | Company command center — KPIs, alerts, part Cpk, in-progress sheets |
+| `/dashboard` | Company command center — KPIs, alerts, part Ppk, in-progress sheets |
 | `/parts`, `/parts/[id]` | Part list, revision history, branch/release actions |
 | `/parts/[id]/revisions/[revId]` | Dimension (tolerance) editor for a draft revision |
 | `/inspect` | Operator flow — look up a part, enter lot info, start a sheet |
-| `/sheets`, `/sheets/[id]` | Sheet list and the live measurement entry / Cpk / export view |
+| `/sheets`, `/sheets/[id]` | Sheet list and the live measurement entry / Ppk / export view |
 
 ## Architecture notes
 
 - **Data fetching**: `@trpc/react-query` + `@tanstack/react-query`, configured in
   `src/lib/trpc.ts` with `httpBatchLink` + `superjson`, pointed at
   `NEXT_PUBLIC_API_URL`. The auth token is attached as a `Bearer` header on every
-  request.
+  request. An `unauthorizedLink` clears the token and redirects to `/login` on
+  `UNAUTHORIZED` responses.
 - **Typing against the API**: `apps/api` doesn't currently export a shared
   `AppRouter` type (no `root.ts` combining its routers), so importing it directly
   would be a fragile relative import across app boundaries. `src/lib/api-types.ts`
@@ -51,9 +52,10 @@ cp .env.example .env.local
   client kept loosely typed against the live API.
 - **Instant SPC feedback**: measurement cells call `evaluateDisposition` from
   `@datasheets/core` synchronously as the operator types, before the mutation to
-  the API even resolves. Per-dimension Cp/Cpk mini-stats use `computeCapability`
-  / `roundCapability` from the same package, recomputed from the samples visible
-  on screen.
+  the API even resolves. Per-dimension Pp/Ppk mini-stats use `computeCapability`
+  / `roundCapability` from the same package (overall / long-term sample sigma),
+  recomputed from the samples visible on screen. Labels show **Pp/Ppk** even
+  though the API fields remain `cp`/`cpk` for compatibility.
 - **No mock data**: every page reads from the real tRPC API. If an endpoint isn't
   reachable (API down, or not yet implemented) pages render an explicit empty /
   error state rather than fabricating data.
@@ -63,13 +65,13 @@ cp .env.example .env.local
 `apps/api` currently ships `auth.*` and `parts.*` routers — those power `/login`,
 `/register`, `/parts`, `/parts/[id]`, and the revision editor end to end today.
 
-The following routers are **expected by this app but not yet implemented
-server-side** (see the contract documented in `src/lib/api-types.ts`):
+The following routers are **expected by this app** (see the contract documented in
+`src/lib/api-types.ts`):
 
-- `dashboard.summary` — powers `/dashboard`
+- `dashboard.overview` — powers `/dashboard`
 - `sheets.list`, `sheets.create`, `sheets.getById`, `sheets.recordMeasurement`,
-  `sheets.complete`, `sheets.exportFile` — power `/inspect`, `/sheets`, and
-  `/sheets/[id]`
+  `sheets.complete` — power `/inspect`, `/sheets`, and `/sheets/[id]`
+- `exports.generate` — CSV / Excel / PDF download from a completed sheet
 
 Until those exist, the corresponding pages render a clear empty/error state
 instead of mock data. Implement them in `apps/api/src/routers` using the same

@@ -124,12 +124,18 @@ export default function RootLayout() {
           }}
         >
           <Stack.Screen name="login" options={{ headerShown: false }} />
-          <Stack.Screen name="index" options={{ headerShown: false }} />
-          <Stack.Screen
-            name="inspect/new"
-            options={{ title: "New Inspection", presentation: "modal" }}
-          />
-          <Stack.Screen name="inspect/[id]" options={{ title: "Inspection" }} />
+          {/* Defer data-fetching screens until auth is ready so they never hit
+              the API without a token (avoids a flash-fetch on cold start). */}
+          {status === "signedIn" ? (
+            <>
+              <Stack.Screen name="index" options={{ headerShown: false }} />
+              <Stack.Screen
+                name="inspect/new"
+                options={{ title: "New Inspection", presentation: "modal" }}
+              />
+              <Stack.Screen name="inspect/[id]" options={{ title: "Inspection" }} />
+            </>
+          ) : null}
         </Stack>
       </AuthContext.Provider>
     </SafeAreaProvider>

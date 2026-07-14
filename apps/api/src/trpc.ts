@@ -2,13 +2,14 @@ import { initTRPC, TRPCError } from "@trpc/server";
 import superjson from "superjson";
 import type { CreateFastifyContextOptions } from "@trpc/server/adapters/fastify";
 import { sql } from "drizzle-orm";
+import { ZodError } from "zod";
 import { createDb, type Db } from "@datasheets/db";
 import { resolveSession, type AuthContext } from "./auth.js";
 import type { MembershipRole } from "@datasheets/core";
 
 const connectionString =
   process.env.DATABASE_URL ??
-  "postgresql://datasheets:datasheets@localhost:5432/datasheets";
+  "postgresql://datasheets_runtime:datasheets_runtime@localhost:5432/datasheets";
 
 export const { db, client: pgClient } = createDb(connectionString);
 
@@ -29,8 +30,33 @@ export async function createContext({ req, res }: CreateFastifyContextOptions) {
 
 export type Context = Awaited<ReturnType<typeof createContext>>;
 
+const isProd = process.env.NODE_ENV === "production";
+
 const t = initTRPC.context<Context>().create({
   transformer: superjson,
+  errorFormatter({ shape, error }) {
+    const cause = error.cause;
+    const zodError = cause instanceof ZodError ? cause.flatten() : null;
+
+    if (isProd && cause instanceof ZodError) {
+      return {
+        ...shape,
+        message: "Invalid request",
+        data: {
+          ...shape.data,
+          zodError: null,
+        },
+      };
+    }
+
+    return {
+      ...shape,
+      data: {
+        ...shape.data,
+        zodError,
+      },
+    };
+  },
 });
 
 export const router = t.router;

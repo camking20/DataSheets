@@ -1,8 +1,39 @@
 import type { InspectionFrequency } from "./schemas.js";
 
 /**
+ * Fill missing piece indices until `count` unique samples exist.
+ * Walks the lot in order and adds unused indices.
+ */
+function fillToCount(indices: number[], lotSize: number, count: number): number[] {
+  const set = new Set(indices);
+  if (set.size >= count) {
+    return [...set].sort((a, b) => a - b);
+  }
+  for (let i = 0; i < lotSize && set.size < count; i++) {
+    set.add(i);
+  }
+  return [...set].sort((a, b) => a - b);
+}
+
+/**
+ * Always keep first (0) and last (lotSize-1) pieces in the sample set.
+ */
+function ensureFirstAndLast(indices: number[], lotSize: number): number[] {
+  const set = new Set(indices);
+  set.add(0);
+  if (lotSize > 0) set.add(lotSize - 1);
+  return [...set].sort((a, b) => a - b);
+}
+
+/**
  * Given lot size and a dimension's inspection frequency, return the
  * 0-based sample indices (piece numbers) that must be measured.
+ *
+ * Both strategies always include the first piece (0) and last piece
+ * (`lotSize - 1`), deduped.
+ *
+ * `sample_size_per_lot` with count > 1 uses inclusive endpoints:
+ * `round(i * (lotSize - 1) / (count - 1))` for `i` in `0..count-1`.
  */
 export function generateSampleIndices(
   lotSize: number,
@@ -15,20 +46,30 @@ export function generateSampleIndices(
     if (count === lotSize) {
       return Array.from({ length: lotSize }, (_, i) => i);
     }
-    // Evenly spaced samples across the lot
-    const indices: number[] = [];
-    for (let i = 0; i < count; i++) {
-      indices.push(Math.floor((i * lotSize) / count));
+    if (count <= 0) return [];
+
+    let indices: number[];
+    if (count === 1) {
+      // Single sample: still pin first + last (may yield 2 when lotSize > 1)
+      indices = [0];
+    } else {
+      // Inclusive endpoints across the lot
+      indices = [];
+      for (let i = 0; i < count; i++) {
+        indices.push(Math.round((i * (lotSize - 1)) / (count - 1)));
+      }
     }
-    return [...new Set(indices)].sort((a, b) => a - b);
+
+    indices = ensureFirstAndLast(indices, lotSize);
+    return fillToCount(indices, lotSize, count);
   }
 
-  // every_n_parts: measure piece 0, n, 2n, ...
+  // every_n_parts: measure piece 0, n, 2n, ... and always the last piece
   const indices: number[] = [];
   for (let i = 0; i < lotSize; i += frequency.n) {
     indices.push(i);
   }
-  return indices;
+  return ensureFirstAndLast(indices, lotSize);
 }
 
 export function requiredSampleCount(

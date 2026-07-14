@@ -69,7 +69,41 @@ export const CreatePartSchema = z.object({
     .optional(),
 });
 
-export const CreateDimensionSchema = z.object({
+/** Returns an error message when LSL/USL/nominal geometry is invalid. */
+export function dimensionGeometryError(data: {
+  nominal?: number | null;
+  usl?: number | null;
+  lsl?: number | null;
+}): string | null {
+  const { usl, lsl, nominal } = data;
+  if (usl == null || lsl == null) return null;
+  if (lsl > usl) {
+    return "LSL must be less than or equal to USL";
+  }
+  if (nominal != null && (nominal < lsl || nominal > usl)) {
+    return "Nominal must be between LSL and USL (LSL ≤ nominal ≤ USL)";
+  }
+  return null;
+}
+
+function refineDimensionGeometry(
+  data: {
+    nominal?: number | null;
+    usl?: number | null;
+    lsl?: number | null;
+  },
+  ctx: z.RefinementCtx,
+) {
+  const message = dimensionGeometryError(data);
+  if (!message) return;
+  ctx.addIssue({
+    code: z.ZodIssueCode.custom,
+    message,
+    path: message.startsWith("Nominal") ? ["nominal"] : ["lsl"],
+  });
+}
+
+const CreateDimensionObjectSchema = z.object({
   partRevisionId: z.string().uuid({ message: "Invalid revision" }),
   name: z
     .string({ required_error: "Dimension name is required" })
@@ -113,13 +147,18 @@ export const CreateDimensionSchema = z.object({
   displayOrder: z.number().int().nonnegative().default(0),
 });
 
-export const UpdateDimensionSchema = CreateDimensionSchema.partial()
+export const CreateDimensionSchema = CreateDimensionObjectSchema.superRefine(
+  refineDimensionGeometry,
+);
+
+export const UpdateDimensionSchema = CreateDimensionObjectSchema.partial()
   .omit({
     partRevisionId: true,
   })
   .extend({
     id: z.string().uuid({ message: "Invalid dimension" }),
-  });
+  })
+  .superRefine(refineDimensionGeometry);
 
 export const CreateDataSheetSchema = z.object({
   partNumber: z
@@ -135,7 +174,8 @@ export const CreateDataSheetSchema = z.object({
       invalid_type_error: "Lot size must be a number",
     })
     .int({ message: "Lot size must be a whole number" })
-    .positive({ message: "Lot size must be at least 1" }),
+    .positive({ message: "Lot size must be at least 1" })
+    .max(10000, { message: "Lot size cannot exceed 10,000" }),
 });
 
 export const RecordMeasurementSchema = z.object({
@@ -144,11 +184,14 @@ export const RecordMeasurementSchema = z.object({
   sampleIndex: z
     .number()
     .int({ message: "Sample index must be a whole number" })
-    .nonnegative({ message: "Sample index can't be negative" }),
-  value: z.number({
-    required_error: "Measurement value is required",
-    invalid_type_error: "Measurement value must be a number",
-  }),
+    .nonnegative({ message: "Sample index can't be negative" })
+    .max(10000, { message: "Sample index cannot exceed 10,000" }),
+  value: z
+    .number({
+      required_error: "Measurement value is required",
+      invalid_type_error: "Measurement value must be a number",
+    })
+    .finite({ message: "Measurement must be a finite number" }),
 });
 
 export const CompanySettingsSchema = z.object({
