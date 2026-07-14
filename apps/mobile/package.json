@@ -1,0 +1,37 @@
+{
+  "name": "@datasheets/mobile",
+  "version": "0.0.1",
+  "private": true,
+  "main": "expo-router/entry",
+  "scripts": {
+    "start": "expo start",
+    "ios": "expo start --ios",
+    "android": "expo start --android",
+    "web": "expo start --web",
+    "lint": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@datasheets/core": "workspace:*",
+    "@expo/metro-runtime": "~57.0.3",
+    "@react-native-async-storage/async-storage": "2.2.0",
+    "@trpc/client": "^11.4.3",
+    "expo": "~57.0.4",
+    "expo-constants": "~57.0.3",
+    "expo-linking": "~57.0.2",
+    "expo-router": "~57.0.4",
+    "expo-status-bar": "~57.0.0",
+    "react": "19.2.3",
+    "react-native": "0.86.0",
+    "react-native-safe-area-context": "~5.7.0",
+    "react-native-screens": "4.25.2",
+    "superjson": "^2.2.2",
+    "whatwg-fetch": "^3.6.20",
+    "zod": "^3.25.67"
+  },
+  "devDependencies": {
+    "@datasheets/db": "workspace:*",
+    "@trpc/server": "^11.4.3",
+    "@types/react": "~19.2.2",
+    "typescript": "~6.0.3"
+  }
+}

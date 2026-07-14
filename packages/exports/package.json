@@ -1,0 +1,28 @@
+{
+  "name": "@datasheets/exports",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsc -p tsconfig.json --watch",
+    "lint": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@datasheets/core": "workspace:*",
+    "exceljs": "^4.4.0",
+    "pdfkit": "^0.17.1"
+  },
+  "devDependencies": {
+    "@types/pdfkit": "^0.13.9",
+    "typescript": "^5.8.3"
+  }
+}

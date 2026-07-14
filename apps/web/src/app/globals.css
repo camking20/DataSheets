@@ -1,0 +1,60 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --font-sans: "DM Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "DM Mono", ui-monospace, SFMono-Regular, monospace;
+
+  --color-status-green: #059669;
+  --color-status-green-bg: #ecfdf5;
+  --color-status-yellow: #d97706;
+  --color-status-yellow-bg: #fffbeb;
+  --color-status-red: #e11d48;
+  --color-status-red-bg: #fff1f2;
+}
+
+html,
+body {
+  background-color: #f8f8f7;
+  color: #18181b;
+}
+
+* {
+  border-color: theme("colors.zinc.200");
+}
+
+body {
+  font-feature-settings: "cv11", "ss01";
+}
+
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+::selection {
+  background-color: #d4d4d8;
+}
+
+.flash-green {
+  animation: flash 260ms ease-out;
+  box-shadow: 0 0 0 3px var(--color-status-green-bg) inset;
+}
+
+.flash-yellow {
+  animation: flash 260ms ease-out;
+  box-shadow: 0 0 0 3px var(--color-status-yellow-bg) inset;
+}
+
+.flash-red {
+  animation: flash 260ms ease-out;
+  box-shadow: 0 0 0 3px var(--color-status-red-bg) inset;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .flash-green,
+  .flash-yellow,
+  .flash-red {
+    animation: none;
+  }
+}

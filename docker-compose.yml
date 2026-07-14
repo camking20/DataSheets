@@ -1,0 +1,25 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: datasheets-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: datasheets
+      POSTGRES_PASSWORD: datasheets
+      POSTGRES_DB: datasheets
+    ports:
+      - "5432:5432"
+    volumes:
+      - datasheets_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U datasheets -d datasheets"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  datasheets_pgdata:
+
+# Note: container superuser is `datasheets` / `datasheets`. Use
+# DATABASE_URL=postgresql://datasheets:datasheets@localhost:5432/datasheets
+# `pnpm db:migrate` creates datasheets_owner / datasheets_app roles and grants.

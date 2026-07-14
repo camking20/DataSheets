@@ -1,0 +1,16 @@
+node_modules
+.turbo
+dist
+.next
+.expo
+*.log
+.env
+.env.local
+.env.*.local
+coverage
+*.tsbuildinfo
+.DS_Store
+apps/mobile/.expo
+apps/mobile/ios
+apps/mobile/android
+packages/db/drizzle/meta
