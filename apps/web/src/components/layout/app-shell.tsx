@@ -1,32 +1,70 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import type { LucideIcon } from "lucide-react";
 import {
   LayoutDashboard,
   Boxes,
   ClipboardPlus,
   FileStack,
+  FileText,
+  GitBranch,
+  Factory,
+  Route,
+  ShieldAlert,
+  Settings,
   LogOut,
   Menu,
   X,
   Loader2,
 } from "lucide-react";
-import { NavLink } from "./nav-link";
+import { TopNavLink } from "./nav-link";
 import { useSession } from "@/hooks/use-session";
 import { clearToken, getToken } from "@/lib/auth";
+import type { MembershipRole } from "@/lib/api-types";
 
-const NAV_ITEMS = [
+type NavItem = {
+  href: string;
+  label: string;
+  icon: LucideIcon;
+};
+
+const CORE_NAV: NavItem[] = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/parts", label: "Parts", icon: Boxes },
+  { href: "/documents", label: "Documents", icon: FileText },
+  { href: "/routings", label: "Routings", icon: Route },
+  { href: "/changes", label: "Change Control", icon: GitBranch },
+  { href: "/shop", label: "Shop", icon: Factory },
   { href: "/inspect", label: "Inspect", icon: ClipboardPlus },
   { href: "/sheets", label: "Sheets", icon: FileStack },
+  { href: "/quality/nc", label: "Quality", icon: ShieldAlert },
+  { href: "/settings/integrations", label: "Settings", icon: Settings },
 ];
+
+/** Operators get Shop + Inspect near the front. */
+function navItemsForRole(role: MembershipRole | null | undefined): NavItem[] {
+  if (role === "operator") {
+    return [
+      { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
+      { href: "/shop", label: "Shop", icon: Factory },
+      { href: "/inspect", label: "Inspect", icon: ClipboardPlus },
+      { href: "/sheets", label: "Sheets", icon: FileStack },
+      { href: "/parts", label: "Parts", icon: Boxes },
+      { href: "/documents", label: "Documents", icon: FileText },
+      { href: "/quality/nc", label: "Quality", icon: ShieldAlert },
+      { href: "/settings/integrations", label: "Settings", icon: Settings },
+    ];
+  }
+  return CORE_NAV;
+}
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const { isAuthenticated, isLoading, me, logout, hasToken } = useSession();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const items = useMemo(() => navItemsForRole(me?.role), [me?.role]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -50,99 +88,102 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="min-h-screen bg-[#f8f8f7]">
-      <div className="flex">
-        <aside className="hidden w-60 shrink-0 flex-col border-r border-zinc-200 bg-white lg:flex">
-          <SidebarContent me={me} onLogout={logout} />
-        </aside>
-
-        {mobileOpen ? (
-          <div className="fixed inset-0 z-40 lg:hidden">
-            <div
-              className="absolute inset-0 bg-black/30"
-              onClick={() => setMobileOpen(false)}
-            />
-            <div className="absolute inset-y-0 left-0 flex w-64 flex-col bg-white shadow-xl">
-              <div className="flex items-center justify-end p-3">
-                <button
-                  onClick={() => setMobileOpen(false)}
-                  className="rounded-md p-1.5 text-zinc-500 hover:bg-zinc-100"
-                  aria-label="Close menu"
-                >
-                  <X className="h-5 w-5" />
-                </button>
-              </div>
-              <SidebarContent me={me} onLogout={logout} onNavigate={() => setMobileOpen(false)} />
-            </div>
+      <header className="sticky top-0 z-30 border-b border-zinc-200 bg-white/95 backdrop-blur">
+        <div className="mx-auto flex h-14 max-w-[1600px] items-center gap-3 px-4 sm:px-6">
+          <div className="flex shrink-0 items-center gap-2">
+            <span className="flex h-7 w-7 items-center justify-center rounded-md bg-zinc-900 text-xs font-bold text-white">
+              DS
+            </span>
+            <span className="hidden text-sm font-semibold tracking-tight sm:inline">
+              DataSheets
+            </span>
           </div>
-        ) : null}
 
-        <div className="flex min-h-screen flex-1 flex-col">
-          <header className="flex h-14 items-center justify-between border-b border-zinc-200 bg-white px-4 lg:hidden">
+          <nav className="hidden min-w-0 flex-1 items-center gap-0.5 overflow-x-auto lg:flex">
+            {items.map((item) => (
+              <TopNavLink key={item.href} {...item} />
+            ))}
+          </nav>
+
+          <div className="ml-auto flex items-center gap-2">
+            <div className="hidden text-right sm:block">
+              <p className="truncate text-xs font-medium text-zinc-900">
+                {me?.user?.name ?? "—"}
+              </p>
+              <p className="truncate text-[11px] text-zinc-500">
+                {me?.companyName ?? "Company"}
+                {me?.role ? ` · ${me.role}` : ""}
+              </p>
+            </div>
             <button
-              onClick={() => setMobileOpen(true)}
-              className="rounded-md p-1.5 text-zinc-600 hover:bg-zinc-100"
+              type="button"
+              onClick={logout}
+              className="hidden items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-sm font-medium text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900 sm:inline-flex"
+            >
+              <LogOut className="h-4 w-4" />
+              <span className="hidden xl:inline">Sign out</span>
+            </button>
+            <button
+              type="button"
+              className="rounded-md p-1.5 text-zinc-600 hover:bg-zinc-100 lg:hidden"
               aria-label="Open menu"
+              onClick={() => setMobileOpen(true)}
             >
               <Menu className="h-5 w-5" />
             </button>
-            <div className="flex items-center gap-2">
-              <span className="flex h-7 w-7 items-center justify-center rounded-md bg-zinc-900 text-xs font-bold text-white">
-                DS
-              </span>
-              <span className="text-sm font-semibold">DataSheets</span>
+          </div>
+        </div>
+      </header>
+
+      {mobileOpen ? (
+        <div className="fixed inset-0 z-40 lg:hidden">
+          <div
+            className="absolute inset-0 bg-black/30"
+            onClick={() => setMobileOpen(false)}
+          />
+          <div className="absolute inset-x-0 top-0 border-b border-zinc-200 bg-white shadow-lg">
+            <div className="flex items-center justify-between px-4 py-3">
+              <span className="text-sm font-semibold">Menu</span>
+              <button
+                type="button"
+                onClick={() => setMobileOpen(false)}
+                className="rounded-md p-1.5 text-zinc-500 hover:bg-zinc-100"
+                aria-label="Close menu"
+              >
+                <X className="h-5 w-5" />
+              </button>
             </div>
-            <div className="w-8" />
-          </header>
-
-          <main className="flex-1 p-4 sm:p-6 lg:p-8">{children}</main>
+            <nav className="flex flex-col gap-0.5 px-3 pb-3">
+              {items.map((item) => (
+                <TopNavLink
+                  key={item.href}
+                  {...item}
+                  stacked
+                  onClick={() => setMobileOpen(false)}
+                />
+              ))}
+            </nav>
+            <div className="border-t border-zinc-100 px-4 py-3">
+              <p className="text-sm font-medium text-zinc-900">
+                {me?.user?.name ?? "—"}
+              </p>
+              <p className="text-xs text-zinc-500">{me?.user?.email ?? ""}</p>
+              <button
+                type="button"
+                onClick={logout}
+                className="mt-3 flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium text-zinc-600 hover:bg-zinc-100"
+              >
+                <LogOut className="h-4 w-4" />
+                Sign out
+              </button>
+            </div>
+          </div>
         </div>
-      </div>
+      ) : null}
+
+      <main className="mx-auto max-w-[1600px] flex-1 p-4 sm:p-6 lg:p-8">
+        {children}
+      </main>
     </div>
-  );
-}
-
-function SidebarContent({
-  me,
-  onLogout,
-  onNavigate,
-}: {
-  me: { user: { name: string; email: string }; companyName: string | null } | undefined;
-  onLogout: () => void;
-  onNavigate?: () => void;
-}) {
-  return (
-    <>
-      <div className="flex h-14 items-center gap-2 border-b border-zinc-200 px-4">
-        <span className="flex h-7 w-7 items-center justify-center rounded-md bg-zinc-900 text-xs font-bold text-white">
-          DS
-        </span>
-        <span className="text-sm font-semibold tracking-tight">DataSheets</span>
-      </div>
-
-      <nav className="flex-1 space-y-1 p-3">
-        {NAV_ITEMS.map((item) => (
-          <NavLink key={item.href} {...item} onClick={onNavigate} />
-        ))}
-      </nav>
-
-      <div className="border-t border-zinc-200 p-3">
-        <div className="mb-2 rounded-lg bg-zinc-50 px-3 py-2">
-          <p className="truncate text-xs font-medium uppercase tracking-wide text-zinc-400">
-            {me?.companyName ?? "Company"}
-          </p>
-          <p className="truncate text-sm font-medium text-zinc-900">
-            {me?.user?.name ?? "—"}
-          </p>
-          <p className="truncate text-xs text-zinc-500">{me?.user?.email ?? ""}</p>
-        </div>
-        <button
-          onClick={onLogout}
-          className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium text-zinc-600 transition-colors hover:bg-zinc-100 hover:text-zinc-900"
-        >
-          <LogOut className="h-4 w-4" />
-          Sign out
-        </button>
-      </div>
-    </>
   );
 }

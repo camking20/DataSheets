@@ -110,6 +110,7 @@ export const sheetsRouter = router({
             lotNumber: input.lotNumber,
             lotSize: input.lotSize,
             operatorId: ctx.auth.user.id,
+            workOrderOperationId: input.workOrderOperationId ?? null,
           })
           .returning();
 
@@ -131,6 +132,7 @@ export const sheetsRouter = router({
             partNumber: input.partNumber,
             lotNumber: input.lotNumber,
             lotSize: input.lotSize,
+            workOrderOperationId: input.workOrderOperationId ?? null,
           },
         });
 

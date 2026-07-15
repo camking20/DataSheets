@@ -10,6 +10,7 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "@datasheets/api": "workspace:*",
     "@datasheets/core": "workspace:*",
     "@tanstack/react-query": "^5.62.0",
     "@trpc/client": "^11.4.3",

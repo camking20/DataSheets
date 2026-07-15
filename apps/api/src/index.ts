@@ -1,4 +1,7 @@
-import "dotenv/config";
+import { config as loadEnv } from "dotenv";
+import { existsSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import Fastify from "fastify";
 import cors from "@fastify/cors";
 import helmet from "@fastify/helmet";
@@ -6,6 +9,26 @@ import { fastifyTRPCPlugin } from "@trpc/server/adapters/fastify";
 import type { TRPCError } from "@trpc/server";
 import { appRouter } from "./root.js";
 import { createContext } from "./trpc.js";
+import { registerGoogleOAuthRoutes } from "./google-oauth-http.js";
+
+/** Load monorepo root `.env` first, then `apps/api/.env` (local overrides). */
+function loadDotenvFiles() {
+  const here = dirname(fileURLToPath(import.meta.url));
+  const candidates = [
+    resolve(here, "../../../.env"), // packages when running from apps/api/src
+    resolve(process.cwd(), "../../.env"),
+    resolve(process.cwd(), ".env"),
+    resolve(here, "../.env"),
+  ];
+  const seen = new Set<string>();
+  for (const path of candidates) {
+    if (seen.has(path) || !existsSync(path)) continue;
+    seen.add(path);
+    loadEnv({ path, override: false });
+  }
+}
+
+loadDotenvFiles();
 
 const PORT = Number(process.env.PORT ?? 4000);
 
@@ -44,6 +67,8 @@ async function main() {
     status: "ok",
     timestamp: new Date().toISOString(),
   }));
+
+  await registerGoogleOAuthRoutes(app);
 
   await app.listen({ port: PORT, host: "0.0.0.0" });
   console.log(`DataSheets API listening on :${PORT}`);

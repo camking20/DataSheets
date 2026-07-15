@@ -57,7 +57,7 @@ interface SheetCompleteOutput {
   snapshots: CapabilitySnapshot[];
 }
 
-type MembershipRole = "operator" | "engineer" | "admin";
+type MembershipRole = "operator" | "engineer" | "admin" | "quality";
 
 interface LoginOutput {
   token: string;

@@ -3,7 +3,12 @@ import { z } from "zod";
 export const DispositionSchema = z.enum(["green", "yellow", "red"]);
 export type Disposition = z.infer<typeof DispositionSchema>;
 
-export const MembershipRoleSchema = z.enum(["operator", "engineer", "admin"]);
+export const MembershipRoleSchema = z.enum([
+  "operator",
+  "engineer",
+  "quality",
+  "admin",
+]);
 export type MembershipRole = z.infer<typeof MembershipRoleSchema>;
 
 export const RevisionStatusSchema = z.enum(["draft", "released", "superseded"]);
@@ -176,6 +181,8 @@ export const CreateDataSheetSchema = z.object({
     .int({ message: "Lot size must be a whole number" })
     .positive({ message: "Lot size must be at least 1" })
     .max(10000, { message: "Lot size cannot exceed 10,000" }),
+  /** Optional MES link — binds sheet to a work-order operation */
+  workOrderOperationId: z.string().uuid().optional(),
 });
 
 export const RecordMeasurementSchema = z.object({

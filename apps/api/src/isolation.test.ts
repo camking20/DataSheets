@@ -5,7 +5,8 @@
  *   postgresql://datasheets_runtime:datasheets_runtime@localhost:5432/datasheets
  *
  * Requires migrations applied (`DATABASE_URL=...datasheets... pnpm db:migrate`).
- * If DATABASE_URL is unset or Postgres is unreachable, the suite is skipped.
+ * If DATABASE_URL is unset or Postgres is unreachable, the suite is skipped
+ * locally — but fails hard when CI=true or REQUIRE_DB_TESTS=true.
  *
  * Fixture setup uses asTenant (datasheets_app) — not withBypassRls — so tests work
  * when connected as datasheets_runtime. Auth register must likewise never
@@ -18,6 +19,8 @@ import { companies, parts } from "@datasheets/db";
 import { asTenant, db, pgClient } from "./trpc.js";
 
 const hasDatabaseUrl = Boolean(process.env.DATABASE_URL);
+const requireDb =
+  process.env.CI === "true" || process.env.REQUIRE_DB_TESTS === "true";
 
 let dbAvailable = false;
 if (hasDatabaseUrl) {
@@ -30,11 +33,16 @@ if (hasDatabaseUrl) {
 }
 
 if (!dbAvailable) {
+  const detail =
+    "[isolation.test] DATABASE_URL is not set or Postgres is unreachable. " +
+    "Run against datasheets_runtime to verify RLS.";
+  if (requireDb) {
+    throw new Error(
+      `${detail} Refusing to skip because CI/REQUIRE_DB_TESTS is set.`,
+    );
+  }
   // eslint-disable-next-line no-console
-  console.warn(
-    "[isolation.test] Skipping tenant isolation tests — DATABASE_URL is not set " +
-      "or Postgres is unreachable. Run against datasheets_runtime to verify RLS.",
-  );
+  console.warn(`[isolation.test] Skipping tenant isolation tests — ${detail}`);
 }
 
 describe.skipIf(!dbAvailable)("tenant isolation (RLS)", () => {

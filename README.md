@@ -81,11 +81,25 @@ See `packages/db/README.md` for schema-level detail.
   - Dev-only: `auth.devVerifyEmail({ email })` when `NODE_ENV !== 'production'`.
   - Seeded demo users are inserted with `email_verified = true` so seed logins work.
 
+## QMS / Document Control (Phase 1)
+
+Phase 1 adds controlled documents, change requests, and Google Drive integration:
+
+- **Google OAuth** — connect a Google account via `GOOGLE_CLIENT_ID` /
+  `GOOGLE_CLIENT_SECRET` / `GOOGLE_REDIRECT_URI` (callback at
+  `http://localhost:4000/google/oauth/callback`). Tokens are stored encrypted with
+  `APP_ENCRYPTION_KEY`.
+- **MinIO** — local S3-compatible object storage (`docker compose up -d`). API on
+  `:9000`, console on `:9001` (user `minio` / `minio12345`). The `minio-init`
+  service creates the `datasheets` bucket. Configure via `S3_*` in `.env`.
+- **Planned routes** — `/documents` (controlled docs), `/changes` (change requests),
+  `/settings/integrations` (Google connect / disconnect).
+
 ## Prerequisites
 
 - Node.js 20+
 - pnpm (`corepack enable` or `npm i -g pnpm`)
-- Docker (for local Postgres) — or any reachable Postgres 16 instance
+- Docker (for local Postgres + MinIO) — or any reachable Postgres 16 instance
 
 ## Setup
 

@@ -19,6 +19,7 @@ export const membershipRoleEnum = pgEnum("membership_role", [
   "operator",
   "engineer",
   "admin",
+  "quality",
 ]);
 
 export const revisionStatusEnum = pgEnum("revision_status", [
@@ -42,6 +43,45 @@ export const dispositionEnum = pgEnum("disposition", [
   "green",
   "yellow",
   "red",
+]);
+
+export const documentTypeEnum = pgEnum("document_type", [
+  "drw",
+  "pro",
+  "wi",
+  "frm",
+]);
+
+export const documentRevisionStatusEnum = pgEnum("document_revision_status", [
+  "draft",
+  "in_review",
+  "released",
+  "superseded",
+  "obsolete",
+]);
+
+export const signatureMeaningEnum = pgEnum("signature_meaning", [
+  "me_approval",
+  "qa_approval",
+  "disposition",
+  "closure",
+  "change_approval_me",
+  "change_approval_qa",
+]);
+
+export const changeOrderStatusEnum = pgEnum("change_order_status", [
+  "draft",
+  "in_review",
+  "approved",
+  "rejected",
+  "implemented",
+]);
+
+export const fileKindEnum = pgEnum("file_kind", [
+  "pdf",
+  "cad",
+  "image",
+  "other",
 ]);
 
 export const companies = pgTable("companies", {
@@ -249,6 +289,8 @@ export const dataSheets = pgTable(
     lotSize: integer("lot_size").notNull(),
     status: sheetStatusEnum("status").notNull().default("in_progress"),
     operatorId: uuid("operator_id").references(() => users.id),
+    /** Optional link to MES work-order operation (nullable; standalone sheets OK) */
+    workOrderOperationId: uuid("work_order_operation_id"),
     completedAt: timestamp("completed_at", { withTimezone: true }),
     notes: text("notes"),
     createdAt: timestamp("created_at", { withTimezone: true })
@@ -267,6 +309,7 @@ export const dataSheets = pgTable(
     ),
     index("data_sheets_revision_idx").on(t.companyId, t.partRevisionId),
     index("data_sheets_status_idx").on(t.companyId, t.status),
+    index("data_sheets_woo_idx").on(t.companyId, t.workOrderOperationId),
     check("data_sheets_lot_size_positive", sql`${t.lotSize} > 0`),
     check("data_sheets_lot_size_max", sql`${t.lotSize} <= 10000`),
   ],
@@ -387,6 +430,240 @@ export const exportJobs = pgTable(
   ],
 );
 
+// ---------------------------------------------------------------------------
+// QMS / controlled documents
+// ---------------------------------------------------------------------------
+
+export const files = pgTable(
+  "files",
+  {
+    id: uuid("id").notNull().default(sql`uuidv7()`),
+    companyId: uuid("company_id")
+      .notNull()
+      .references(() => companies.id, { onDelete: "cascade" }),
+    storageKey: text("storage_key").notNull(),
+    sha256: text("sha256").notNull(),
+    sizeBytes: integer("size_bytes"),
+    mimeType: text("mime_type"),
+    kind: fileKindEnum("kind"),
+    originalName: text("original_name"),
+    uploadedBy: uuid("uploaded_by").references(() => users.id),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.companyId, t.id] }),
+    index("files_sha256_idx").on(t.companyId, t.sha256),
+  ],
+);
+
+export const numberCounters = pgTable(
+  "number_counters",
+  {
+    companyId: uuid("company_id")
+      .notNull()
+      .references(() => companies.id, { onDelete: "cascade" }),
+    /** Prefix for document numbering, e.g. DRW, PRO, WI, FRM, CO */
+    prefix: text("prefix").notNull(),
+    lastValue: integer("last_value").notNull().default(0),
+  },
+  (t) => [primaryKey({ columns: [t.companyId, t.prefix] })],
+);
+
+export const documents = pgTable(
+  "documents",
+  {
+    id: uuid("id").notNull().default(sql`uuidv7()`),
+    companyId: uuid("company_id")
+      .notNull()
+      .references(() => companies.id, { onDelete: "cascade" }),
+    docNumber: text("doc_number").notNull(),
+    docType: documentTypeEnum("doc_type").notNull(),
+    title: text("title"),
+    partId: uuid("part_id"),
+    /** Optional link to the FRM that originated this document */
+    sourceFrmId: uuid("source_frm_id"),
+    isActive: boolean("is_active").notNull().default(true),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.companyId, t.id] }),
+    uniqueIndex("documents_company_doc_number_uidx").on(
+      t.companyId,
+      t.docNumber,
+    ),
+    index("documents_part_idx").on(t.companyId, t.partId),
+    index("documents_type_idx").on(t.companyId, t.docType),
+  ],
+);
+
+export const documentRevisions = pgTable(
+  "document_revisions",
+  {
+    id: uuid("id").notNull().default(sql`uuidv7()`),
+    companyId: uuid("company_id").notNull(),
+    documentId: uuid("document_id").notNull(),
+    rev: text("rev").notNull(),
+    status: documentRevisionStatusEnum("status").notNull().default("draft"),
+    googleFileId: text("google_file_id"),
+    pdfFileId: uuid("pdf_file_id"),
+    cadFileId: uuid("cad_file_id"),
+    changeSummary: text("change_summary"),
+    createdBy: uuid("created_by").references(() => users.id),
+    releasedAt: timestamp("released_at", { withTimezone: true }),
+    releasedBy: uuid("released_by").references(() => users.id),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.companyId, t.id] }),
+    uniqueIndex("document_revisions_company_doc_rev_uidx").on(
+      t.companyId,
+      t.documentId,
+      t.rev,
+    ),
+    uniqueIndex("document_revisions_one_released_uq")
+      .on(t.companyId, t.documentId)
+      .where(sql`${t.status} = 'released'`),
+    index("document_revisions_document_idx").on(t.companyId, t.documentId),
+    index("document_revisions_status_idx").on(t.companyId, t.status),
+  ],
+);
+
+/**
+ * Electronic signatures — immutable audit records.
+ * No updated_at; app role has SELECT/INSERT only (no UPDATE/DELETE).
+ */
+export const signatures = pgTable(
+  "signatures",
+  {
+    id: uuid("id").notNull().default(sql`uuidv7()`),
+    companyId: uuid("company_id")
+      .notNull()
+      .references(() => companies.id, { onDelete: "cascade" }),
+    entityType: text("entity_type").notNull(),
+    entityId: uuid("entity_id").notNull(),
+    meaning: signatureMeaningEnum("meaning").notNull(),
+    signerId: uuid("signer_id")
+      .notNull()
+      .references(() => users.id),
+    /** Snapshot of signer display name at signing time */
+    signerName: text("signer_name").notNull(),
+    signedAt: timestamp("signed_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    contentSha256: text("content_sha256").notNull(),
+    passwordVerified: boolean("password_verified").notNull().default(true),
+    metadata: jsonb("metadata").$type<Record<string, unknown>>().default({}),
+  },
+  (t) => [
+    primaryKey({ columns: [t.companyId, t.id] }),
+    index("signatures_entity_idx").on(
+      t.companyId,
+      t.entityType,
+      t.entityId,
+    ),
+    index("signatures_signed_at_idx").on(t.companyId, t.signedAt),
+  ],
+);
+
+export const changeOrders = pgTable(
+  "change_orders",
+  {
+    id: uuid("id").notNull().default(sql`uuidv7()`),
+    companyId: uuid("company_id")
+      .notNull()
+      .references(() => companies.id, { onDelete: "cascade" }),
+    coNumber: text("co_number").notNull(),
+    title: text("title"),
+    description: text("description").notNull(),
+    reason: text("reason").notNull(),
+    status: changeOrderStatusEnum("status").notNull().default("draft"),
+    createdBy: uuid("created_by").references(() => users.id),
+    approvedAt: timestamp("approved_at", { withTimezone: true }),
+    implementedAt: timestamp("implemented_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.companyId, t.id] }),
+    uniqueIndex("change_orders_company_co_number_uidx").on(
+      t.companyId,
+      t.coNumber,
+    ),
+    index("change_orders_status_idx").on(t.companyId, t.status),
+  ],
+);
+
+export const changeOrderItems = pgTable(
+  "change_order_items",
+  {
+    id: uuid("id").notNull().default(sql`uuidv7()`),
+    companyId: uuid("company_id").notNull(),
+    changeOrderId: uuid("change_order_id").notNull(),
+    /** Exactly one of documentRevisionId / routingRevisionId must be set (SQL CHECK) */
+    documentRevisionId: uuid("document_revision_id"),
+    routingRevisionId: uuid("routing_revision_id"),
+    notes: text("notes"),
+  },
+  (t) => [
+    primaryKey({ columns: [t.companyId, t.id] }),
+    uniqueIndex("change_order_items_co_doc_rev_uidx")
+      .on(t.companyId, t.changeOrderId, t.documentRevisionId)
+      .where(sql`${t.documentRevisionId} IS NOT NULL`),
+    uniqueIndex("change_order_items_co_rtg_rev_uidx")
+      .on(t.companyId, t.changeOrderId, t.routingRevisionId)
+      .where(sql`${t.routingRevisionId} IS NOT NULL`),
+    index("change_order_items_co_idx").on(t.companyId, t.changeOrderId),
+  ],
+);
+
+/** One Google Drive connection per company */
+export const googleConnections = pgTable("google_connections", {
+  companyId: uuid("company_id")
+    .primaryKey()
+    .references(() => companies.id, { onDelete: "cascade" }),
+  encryptedRefreshToken: text("encrypted_refresh_token"),
+  accountEmail: text("account_email"),
+  rootFolderId: text("root_folder_id"),
+  /** Subfolder IDs keyed by document type / purpose */
+  folders: jsonb("folders").$type<Record<string, string>>().default({}),
+  connectedBy: uuid("connected_by").references(() => users.id),
+  connectedAt: timestamp("connected_at", { withTimezone: true }),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
+
+/**
+ * Short-lived Google OAuth CSRF state — global (FORCE RLS, open datasheets_app
+ * policies). Consumed on callback before tenant GUC is set.
+ */
+export const oauthStates = pgTable("oauth_states", {
+  id: uuid("id").primaryKey().default(sql`uuidv7()`),
+  state: text("state").notNull().unique(),
+  companyId: uuid("company_id").notNull(),
+  userId: uuid("user_id").notNull(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
+
 export type Company = typeof companies.$inferSelect;
 export type User = typeof users.$inferSelect;
 export type Membership = typeof memberships.$inferSelect;
@@ -396,3 +673,12 @@ export type Dimension = typeof dimensions.$inferSelect;
 export type DataSheet = typeof dataSheets.$inferSelect;
 export type Measurement = typeof measurements.$inferSelect;
 export type CapabilitySnapshot = typeof capabilitySnapshots.$inferSelect;
+export type File = typeof files.$inferSelect;
+export type NumberCounter = typeof numberCounters.$inferSelect;
+export type Document = typeof documents.$inferSelect;
+export type DocumentRevision = typeof documentRevisions.$inferSelect;
+export type Signature = typeof signatures.$inferSelect;
+export type ChangeOrder = typeof changeOrders.$inferSelect;
+export type ChangeOrderItem = typeof changeOrderItems.$inferSelect;
+export type GoogleConnection = typeof googleConnections.$inferSelect;
+export type OAuthState = typeof oauthStates.$inferSelect;

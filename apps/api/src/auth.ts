@@ -99,7 +99,7 @@ export async function resolveSession(db: Db, token: string | null | undefined) {
     );
 
     let companyId = session.activeCompanyId;
-    let role: "operator" | "engineer" | "admin" | null = null;
+    let role: "operator" | "engineer" | "admin" | "quality" | null = null;
     let companyName: string | null = null;
 
     if (companyId) {

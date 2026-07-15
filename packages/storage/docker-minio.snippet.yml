@@ -1,0 +1,40 @@
+# Optional MinIO snippet — merge into root docker-compose.yml if needed.
+# Prefer the root compose services `minio` + `minio-init` when present.
+
+services:
+  minio:
+    image: minio/minio:latest
+    container_name: datasheets-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minio
+      MINIO_ROOT_PASSWORD: minio12345
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - datasheets_minio:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  minio-init:
+    image: minio/mc:latest
+    container_name: datasheets-minio-init
+    depends_on:
+      minio:
+        condition: service_started
+    entrypoint: >
+      /bin/sh -c "
+      until mc alias set local http://minio:9000 minio minio12345; do sleep 1; done;
+      mc mb --ignore-existing local/datasheets;
+      exit 0;
+      "
+    restart: "no"
+
+volumes:
+  datasheets_minio:

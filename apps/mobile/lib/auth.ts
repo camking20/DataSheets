@@ -77,7 +77,7 @@ export interface AuthCompany {
   id: string;
   name: string;
   slug: string;
-  role: "operator" | "engineer" | "admin";
+  role: "operator" | "engineer" | "admin" | "quality";
 }
 
 export interface AuthState {

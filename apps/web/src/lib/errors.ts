@@ -35,7 +35,10 @@ type ZodLikeIssue = {
 function humanizePath(path: Array<string | number> | undefined): string | null {
   if (!path || path.length === 0) return null;
   const key = String(path[path.length - 1]);
-  return FIELD_LABELS[key] ?? key.replace(/([A-Z])/g, " $1").replace(/^./, (c) => c.toUpperCase());
+  if (FIELD_LABELS[key]) return FIELD_LABELS[key];
+  // Keep SCREAMING_SNAKE / env-style keys intact (avoid "G O O G L E_…")
+  if (/^[A-Z0-9_]+$/.test(key)) return key;
+  return key.replace(/([A-Z])/g, " $1").replace(/^./, (c) => c.toUpperCase());
 }
 
 function formatZodIssue(issue: ZodLikeIssue): string {

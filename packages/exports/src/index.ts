@@ -375,3 +375,21 @@ export async function toPdf(payload: ExportSheetPayload): Promise<Buffer> {
     doc.end();
   });
 }
+
+export {
+  generateDmrPdf,
+  generateDhrPdf,
+  type DmrPdfPayload,
+  type DmrPdfDocument,
+  type DmrPdfOperation,
+  type DmrPdfSignature,
+  type DhrPdfPayload,
+  type DhrPdfOperation,
+  type DhrPdfExecution,
+  type DhrPdfFrozenDoc,
+  type DhrPdfDataSheet,
+  type DhrPdfMeasurement,
+  type DhrPdfCapability,
+  type DhrPdfNc,
+  type DhrPdfSignature,
+} from "./dmr-dhr.js";

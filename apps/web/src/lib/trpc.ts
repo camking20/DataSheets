@@ -2,8 +2,10 @@ import { createTRPCReact } from "@trpc/react-query";
 import { httpBatchLink, type TRPCLink } from "@trpc/client";
 import { observable } from "@trpc/server/observable";
 import superjson from "superjson";
+import type { AppRouter } from "@datasheets/api/router";
 import { clearToken, getToken } from "./auth";
-import type { AppRouter } from "./api-types";
+
+export type { AppRouter };
 
 export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
 
