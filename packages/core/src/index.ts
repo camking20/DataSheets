@@ -9,5 +9,6 @@ export * from "./nc.js";
 export * from "./capa.js";
 export * from "./mes.js";
 export * from "./numbering.js";
-export * from "./hashing.js";
 export * from "./revisions.js";
+// hashing (node:crypto) is Node/API-only — import from "@datasheets/core/hashing"
+// so Next.js client bundles never pull node: builtins.

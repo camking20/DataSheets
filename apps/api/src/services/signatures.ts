@@ -19,11 +19,13 @@ import {
   type SignatureMeaning,
   canSignMeaning,
   assertSegregationOfDuties,
+} from "@datasheets/core";
+import {
   hashDocumentRevisionContent,
   hashChangeOrderContent,
   hashNcContent,
   hashCapaContent,
-} from "@datasheets/core";
+} from "@datasheets/core/hashing";
 import { verifyPassword } from "../auth.js";
 
 export type ApplySignatureInput = {

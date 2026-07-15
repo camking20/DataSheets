@@ -23,11 +23,13 @@ import { describe, expect, it } from "vitest";
 import {
   assertSegregationOfDuties,
   canSignMeaning,
+} from "@datasheets/core";
+import {
   hashCapaContent,
   hashChangeOrderContent,
   hashDocumentRevisionContent,
   hashNcContent,
-} from "@datasheets/core";
+} from "@datasheets/core/hashing";
 
 describe("applySignature content hashes (@datasheets/core)", () => {
   it("binds document revisions to the PDF SHA-256 digest", () => {
